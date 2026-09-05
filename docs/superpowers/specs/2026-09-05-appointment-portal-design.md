@@ -1,7 +1,7 @@
 # Patient and clinician appointment portal
 
 Date: 2026-09-05
-Status: Design consolidated from the conversation; awaiting written-spec review.
+Status: Approved by the user on 2026-09-05; implementation planning authorized.
 
 ## 1. Purpose and outcome
 
@@ -353,10 +353,10 @@ execution happen later; this document makes neither claim.
 
 ## 13. Review and deployment inputs
 
-The user has approved the architecture, frontend stack, account model, booking rules,
-module structure, and deploy/verify/destroy lifecycle in conversation. Review this
-consolidated document before creating an implementation plan, particularly the explicit
-defaults for SQL access, browser token storage, networking, and single-AZ deployment.
+The user approved this consolidated specification on 2026-09-05, including the
+architecture, frontend stack, account model, booking rules, module structure, and
+deploy/verify/destroy lifecycle. The SQL access, browser token storage, networking,
+and single-AZ defaults in this spec are the baseline for implementation planning.
 
 Execution inputs are the AWS account/profile, GitHub repository destination/visibility,
 controlled email addresses, and a pre-deployment cost ceiling. These are supplied or
