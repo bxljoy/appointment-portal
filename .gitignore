@@ -1,0 +1,13 @@
+node_modules/
+dist/
+coverage/
+cdk.out/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.DS_Store
+playwright-report/
+test-results/
+.auth/
