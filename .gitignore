@@ -11,3 +11,4 @@ cdk.out/
 playwright-report/
 test-results/
 .auth/
+.worktrees/
