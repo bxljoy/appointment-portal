@@ -14,6 +14,6 @@ export default defineConfig({
       });
     },
   }],
-  server: { port: 5173, strictPort: true, proxy: { '/api': 'http://127.0.0.1:3001' } },
+  server: { port: 5173, strictPort: true, proxy: { '/api': process.env.PORTAL_LOCAL_API_URL ?? 'http://127.0.0.1:3001' } },
   build: { manifest: true },
 });

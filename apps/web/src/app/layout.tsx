@@ -43,7 +43,7 @@ function AuthenticatedLayout({ onExpired }: { onExpired: () => void }) {
       </div>
       <nav aria-label="Main navigation" className="page-width main-navigation">
         <NavLink to="/clinicians">Find a clinician</NavLink>
-        <NavLink to={me.role === 'patient' ? '/appointments' : '/clinician/appointments'}>Appointments</NavLink>
+        <NavLink to={me.role === 'patient' ? '/appointments' : '/clinician/appointments'}>My appointments</NavLink>
         {me.role === 'clinician' && <NavLink to="/clinician/availability">Availability</NavLink>}
       </nav>
     </header>

@@ -120,12 +120,10 @@ require, allowing esbuild to include it; `%L` still quotes password literals.
 `pnpm build` produces the migration artifact and `pnpm check:bundles` imports it and
 verifies its SQL, CA, dependencies and absence of local identities.
 
-Dependency review on 2026-09-06: pnpm's full audit reports the existing Vitest 3.2.4
-[UI/API-server advisory](https://github.com/vitest-dev/vitest/security/advisories/GHSA-5xrq-8626-4rwp).
-Its affected path is unused: project commands run `vitest run`, with no Vitest UI,
-browser mode, or exposed API server, and test tooling is absent from Lambda bundles.
-The new setup dependencies have no reported findings. Review and update the test
-runner in Task 15, before enabling any test UI/server or by 2026-09-07.
+The Vitest UI/API-server advisory deferred during setup implementation was resolved
+in Task 15 with Vitest 3.2.6. See the [testing runbook](testing.md) for the patched
+release selection and dependency checks. Test tooling remains outside the Lambda
+artifacts, and project commands do not expose the Vitest UI/API server.
 
 Primary API references: [Cognito AdminCreateUser](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminCreateUser.html),
 [AdminGetUser](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminGetUser.html),

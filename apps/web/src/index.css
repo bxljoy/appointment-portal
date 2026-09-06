@@ -7,6 +7,7 @@
   --color-muted: #edf1ec;
   --color-muted-foreground: #54645d;
   --color-border: #d3ddd5;
+  --color-control-border: #7a8c80;
   --color-primary: #164e46;
   --color-primary-hover: #103b34;
   --color-primary-foreground: #ffffff;
@@ -22,6 +23,7 @@
   h1 { font-size: clamp(1.75rem, 4vw, 2.5rem); letter-spacing: -0.025em; }
   h2 { font-size: 1.5rem; }
   a, button, input, select, textarea { -webkit-tap-highlight-color: transparent; }
+  input[type='date'], input[type='datetime-local'], select, textarea { border-color: var(--color-control-border); }
   a:focus-visible, button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--color-ring); outline-offset: 4px; }
   button, select { cursor: pointer; }
 }

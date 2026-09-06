@@ -27,5 +27,5 @@ it.each(['patient', 'clinician'])('uses /api/me for %s navigation', async (role)
   expect(screen.getByRole('navigation', { name: 'Main navigation' })).toBeInTheDocument();
   if (role === 'clinician') expect(screen.getByRole('link', { name: 'Availability' })).toHaveAttribute('href', '/clinician/availability');
   else expect(screen.queryByRole('link', { name: 'Availability' })).not.toBeInTheDocument();
-  expect(screen.getByRole('link', { name: 'Appointments' })).toHaveAttribute('href', role === 'patient' ? '/appointments' : '/clinician/appointments');
+  expect(screen.getByRole('link', { name: 'My appointments' })).toHaveAttribute('href', role === 'patient' ? '/appointments' : '/clinician/appointments');
 });

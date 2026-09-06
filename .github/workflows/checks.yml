@@ -1,0 +1,66 @@
+name: Checks
+on:
+  pull_request:
+  push:
+permissions:
+  contents: read
+jobs:
+  quality:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17.6@sha256:00bc86618629af00d2937fdc5a5d63db3ff8450acf52f0636ec813c7f4902929
+        env:
+          POSTGRES_USER: portal
+          POSTGRES_DB: portal
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - '127.0.0.1:54329:5432'
+        options: >-
+          --health-cmd 'pg_isready -U portal -d portal'
+          --health-interval 2s --health-timeout 3s --health-retries 20
+    env:
+      DATABASE_URL: postgres://portal@127.0.0.1:54329/portal
+      AWS_CONFIG_FILE: /dev/null
+      AWS_SHARED_CREDENTIALS_FILE: /dev/null
+      AWS_EC2_METADATA_DISABLED: 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: '11.22.0'
+          run_install: false
+          cache: false
+      - name: Frozen install without dependency scripts
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Lint
+        run: pnpm lint
+      - name: Build the workspace contract exports
+        run: pnpm --filter @portal/contracts build
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Unit, component, PostgreSQL integration and infrastructure assertions
+        run: pnpm test
+      - name: Production builds
+        run: |
+          pnpm build
+          pnpm --filter @portal/api build:lambdas
+      - name: Offline bootstrap and ready synthesis
+        run: pnpm check:infra
+      - name: Production bundle and artifact guards
+        run: |
+          pnpm check:bundles
+          pnpm check:artifacts
+      - name: Dependency audit
+        run: pnpm audit --audit-level=high
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Local browser and accessibility journeys
+        run: pnpm exec playwright test --project=local-desktop --project=local-mobile

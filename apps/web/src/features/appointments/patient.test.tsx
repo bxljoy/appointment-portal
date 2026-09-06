@@ -41,7 +41,7 @@ describe('patient appointment journeys', () => {
     expect(await screen.findByText('Appointment confirmed')).toBeInTheDocument();
     expect(portal.queryClient.getQueryState(['patient-sub', 'appointments', 'first'])?.isInvalidated).toBe(true);
     await waitFor(() => expect(fetchMock.mock.calls.filter(([request]) => new URL(String(request), 'https://portal.test').pathname.endsWith('/slots')).length).toBeGreaterThan(1));
-    await portal.user.click(screen.getByRole('link', { name: 'Appointments' }));
+    await portal.user.click(screen.getByRole('link', { name: 'My appointments' }));
     expect(await screen.findByText('Upcoming appointment')).toBeInTheDocument();
   });
 
