@@ -2,16 +2,16 @@ import { useEffect, useRef, useState } from 'react';
 import type { Appointment } from '@portal/contracts';
 
 import { Button } from '../../components/ui/button';
+import { formatAppointmentTime } from '../../lib/time';
 import { CancelDialog } from './cancel-dialog';
 import { useAppointments } from './queries';
 
 const timezone = () => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-const showTime = (value: string, viewerTimezone: string) => new Intl.DateTimeFormat(undefined, { timeZone: viewerTimezone, weekday: 'short', year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }).format(new Date(value));
 const started = (appointment: Appointment) => new Date(appointment.startAt).getTime() <= Date.now();
 
 function AppointmentRow({ appointment, viewerTimezone, onCancelled, onRestoreFocus }: { appointment: Appointment; viewerTimezone: string; onCancelled(appointment: Appointment): void; onRestoreFocus(): void }) {
   const canCancel = appointment.status === 'booked' && !started(appointment);
-  return <li className="flex flex-col gap-3 rounded-md border bg-surface p-5 sm:flex-row sm:items-center sm:justify-between"><div><h3 className="font-semibold">{appointment.clinicianDisplayName}</h3><p className="text-sm text-muted-foreground">{showTime(appointment.startAt, viewerTimezone)}</p><p className="mt-1 text-sm">{appointment.status === 'cancelled' ? 'Cancelled' : started(appointment) ? 'Started appointment' : 'Upcoming appointment'}</p></div>{canCancel && <CancelDialog appointment={appointment} onCancelled={onCancelled} onRestoreFocus={onRestoreFocus} />}</li>;
+  return <li className="flex flex-col gap-3 rounded-md border bg-surface p-5 sm:flex-row sm:items-center sm:justify-between"><div><h3 className="font-semibold">{appointment.clinicianDisplayName}</h3><p className="text-sm text-muted-foreground">{formatAppointmentTime(appointment.startAt, viewerTimezone)}</p><p className="mt-1 text-sm">{appointment.status === 'cancelled' ? 'Cancelled' : started(appointment) ? 'Started appointment' : 'Upcoming appointment'}</p></div>{canCancel && <CancelDialog appointment={appointment} onCancelled={onCancelled} onRestoreFocus={onRestoreFocus} />}</li>;
 }
 
 export function PatientAppointmentsPage() {

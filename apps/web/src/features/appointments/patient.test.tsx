@@ -185,6 +185,7 @@ describe('patient appointment journeys', () => {
     const trigger = await screen.findByRole('button', { name: 'Cancel appointment with Dr. Ada Lovelace' });
     await portal.user.click(trigger);
     expect(screen.getByRole('dialog', { name: 'Cancel appointment' })).toBeInTheDocument();
+    expect(screen.queryByRole('checkbox', { name: 'Withdraw this slot too' })).not.toBeInTheDocument();
     expect(completeCancellation).toBeUndefined();
     await portal.user.click(screen.getByRole('button', { name: 'Confirm cancellation' }));
     expect(screen.getByRole('button', { name: 'Confirm cancellation' })).toBeDisabled();

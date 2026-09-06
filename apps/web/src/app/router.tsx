@@ -10,6 +10,8 @@ import { Button } from '../components/ui/button';
 import { ClinicianDirectoryPage } from '../features/clinicians/directory-page';
 import { ClinicianDetailPage } from '../features/clinicians/detail-page';
 import { PatientAppointmentsPage } from '../features/appointments/patient-page';
+import { ClinicianAppointmentsPage } from '../features/appointments/clinician-page';
+import { ClinicianAvailabilityPage } from '../features/availability/clinician-page';
 
 function RouteFocus() {
   const location = useLocation();
@@ -24,9 +26,6 @@ function RoleRoute({ role, children }: { role: Role; children: ReactNode }) {
   const me = useOutletContext<Me>();
   if (me.role !== role) return <section><h1>This page is for {role === 'clinician' ? 'clinicians' : 'patients'}</h1><p>Your account does not have access to this workspace.</p><Button asChild><Link to="/clinicians">Find a clinician</Link></Button></section>;
   return children;
-}
-function RouteIntroduction({ title, description }: { title: string; description: string }) {
-  return <section className="route-introduction"><p className="eyebrow">Appointment portal</p><h1>{title}</h1><p>{description}</p><div className="care-note"><span className="care-note-label">Plan your visit</span><p>Each appointment lasts 30 minutes. Times are displayed in {Intl.DateTimeFormat().resolvedOptions().timeZone}.</p></div></section>;
 }
 function SignedOutPage() {
   const session = useSession();
@@ -46,8 +45,8 @@ export function AppRoutes() {
         <Route path="/clinicians" element={<ClinicianDirectoryPage />} />
         <Route path="/clinicians/:id" element={<ClinicianDetailPage />} />
         <Route path="/appointments" element={<RoleRoute role="patient"><PatientAppointmentsPage /></RoleRoute>} />
-        <Route path="/clinician/availability" element={<RoleRoute role="clinician"><RouteIntroduction title="Your availability" description="Publish appointment times and manage your open slots." /></RoleRoute>} />
-        <Route path="/clinician/appointments" element={<RoleRoute role="clinician"><RouteIntroduction title="Your appointments" description="Review scheduled visits and manage your upcoming appointments." /></RoleRoute>} />
+        <Route path="/clinician/availability" element={<RoleRoute role="clinician"><ClinicianAvailabilityPage /></RoleRoute>} />
+        <Route path="/clinician/appointments" element={<RoleRoute role="clinician"><ClinicianAppointmentsPage /></RoleRoute>} />
         <Route path="*" element={<section><h1>Page not found</h1><p>This page is unavailable. Return to the clinician directory to continue.</p><Button asChild><Link to="/clinicians">Find a clinician</Link></Button></section>} />
       </Route>
     </Route>

@@ -3,6 +3,7 @@ import { useParams, useSearchParams } from 'react-router-dom';
 import type { WindowQuery } from '@portal/contracts';
 
 import { Button } from '../../components/ui/button';
+import { formatAppointmentTime } from '../../lib/time';
 import { BookingForm } from '../appointments/booking-form';
 import { useClinician, useSlots } from './queries';
 
@@ -45,7 +46,6 @@ export const availabilityWindowForDate = (date: string, timezone: string): Windo
   const to = tomorrow && zonedMidnight(tomorrow, timezone);
   return from && to && to > from ? { from: from.toISOString(), to: to.toISOString(), limit: 20 } : undefined;
 };
-const displayTime = (instant: string, timezone: string) => new Intl.DateTimeFormat(undefined, { timeZone: timezone, weekday: 'short', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }).format(new Date(instant));
 
 export function ClinicianDetailPage() {
   const { id } = useParams();
@@ -70,7 +70,7 @@ export function ClinicianDetailPage() {
       {!window && <p role="alert" className="error-message">Choose a valid appointment date.</p>}
       {window && slots.isPending && <div role="status" aria-busy="true">Loading available times</div>}
       {slots.isError && <div role="alert" className="error-message"><p>{slots.error instanceof Error ? slots.error.message : 'We could not load available times.'}</p><Button onClick={() => void slots.refetch()}>Try again</Button></div>}
-      {slots.data && <BookingForm slots={slots.data.items} timezone={timezone} formatSlot={(slot) => displayTime(slot.startAt, timezone)} />}
+      {slots.data && <BookingForm slots={slots.data.items} timezone={timezone} formatSlot={(slot) => formatAppointmentTime(slot.startAt, timezone)} />}
       {slots.data?.nextCursor && <Button variant="outline" onClick={() => setSlotCursor({ scope: slotScope, value: slots.data?.nextCursor ?? undefined })}>More available times</Button>}
     </>}
   </section>;

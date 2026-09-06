@@ -95,6 +95,7 @@ export function useCancelAppointment() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: [sub, 'appointments'] }),
         queryClient.invalidateQueries({ queryKey: [sub, 'slots'] }),
+        queryClient.invalidateQueries({ queryKey: [sub, 'availability'] }),
       ]);
     },
   });
