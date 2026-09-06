@@ -2,11 +2,13 @@ import { DefaultStackSynthesizer, RemovalPolicies, Stack, Tags, type StackProps 
 import type { Construct } from 'constructs';
 import { parsePortalConfig, type PortalConfig } from './config.js';
 import { DataConstruct } from './data-construct.js';
+import { IdentityConstruct } from './identity-construct.js';
 
 export type PortalStackProps = StackProps & { config: PortalConfig };
 
 export class PortalStack extends Stack {
   readonly data: DataConstruct;
+  readonly identity: IdentityConstruct;
 
   constructor(scope: Construct, id: string, props: PortalStackProps) {
     const config = parsePortalConfig(props.config);
@@ -19,6 +21,7 @@ export class PortalStack extends Stack {
     });
     Tags.of(this).add('Project', 'appointment-portal');
     this.data = new DataConstruct(this, 'Data', { config });
+    this.identity = new IdentityConstruct(this, 'Identity', { config });
     RemovalPolicies.of(this).destroy();
   }
 }
