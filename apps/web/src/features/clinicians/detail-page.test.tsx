@@ -1,5 +1,6 @@
-import { screen } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { useNavigate } from 'react-router-dom';
 
 import { AppRoutes } from '../../app/router';
 import { renderPortalPage } from '../../test/render';
@@ -14,6 +15,11 @@ const clinician = {
 };
 const me = { id: '10000000-0000-4000-8000-000000000001', displayName: 'Pat Lee', role: 'patient' };
 const response = (body: unknown) => new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' } });
+
+function NavigateToFollowingDate() {
+  const navigate = useNavigate();
+  return <button onClick={() => navigate(`/clinicians/${clinician.id}?date=2030-01-16`)}>Navigate to following date</button>;
+}
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -43,5 +49,43 @@ describe('availability date bounds', () => {
     renderPortalPage(<AppRoutes />, { initialEntry: `/clinicians/${clinician.id}?date=2030-99-99` });
     expect(await screen.findByText('Choose a valid appointment date.')).toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([request]) => new URL(String(request), 'https://portal.test').pathname.endsWith('/slots'))).toBe(false);
+  });
+
+  it('keeps a cleared date invalid instead of silently replacing it with today', async () => {
+    const slotRequests: URL[] = [];
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+      const url = new URL(String(input), 'https://portal.test');
+      if (url.pathname === '/api/me') return Promise.resolve(response(me));
+      if (url.pathname === `/api/clinicians/${clinician.id}`) return Promise.resolve(response(clinician));
+      if (url.pathname.endsWith('/slots')) { slotRequests.push(url); return Promise.resolve(response({ items: [], nextCursor: null })); }
+      throw new Error(`Unexpected request ${url.pathname}`);
+    }));
+    const portal = renderPortalPage(<AppRoutes />, { initialEntry: `/clinicians/${clinician.id}?date=2030-01-15` });
+    await screen.findByText('No available times on this date.');
+    await portal.user.clear(screen.getByLabelText('Date'));
+    expect(await screen.findByText('Choose a valid appointment date.')).toBeInTheDocument();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(slotRequests).toHaveLength(1);
+  });
+
+  it('does not send the previous slot cursor after Back/Forward-like URL navigation', async () => {
+    const slotRequests: URL[] = [];
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+      const url = new URL(String(input), 'https://portal.test');
+      if (url.pathname === '/api/me') return Promise.resolve(response(me));
+      if (url.pathname === `/api/clinicians/${clinician.id}`) return Promise.resolve(response(clinician));
+      if (url.pathname.endsWith('/slots')) {
+        slotRequests.push(url);
+        return Promise.resolve(response({ items: [], nextCursor: url.searchParams.get('cursor') ? null : 'old-cursor' }));
+      }
+      throw new Error(`Unexpected request ${url.pathname}`);
+    }));
+    const portal = renderPortalPage(<><AppRoutes /><NavigateToFollowingDate /></>, { initialEntry: `/clinicians/${clinician.id}?date=2030-01-15` });
+    await screen.findByRole('button', { name: 'More available times' });
+    await portal.user.click(screen.getByRole('button', { name: 'More available times' }));
+    await waitFor(() => expect(slotRequests.some((url) => url.searchParams.get('cursor') === 'old-cursor')).toBe(true));
+    await portal.user.click(screen.getByRole('button', { name: 'Navigate to following date' }));
+    await waitFor(() => expect(slotRequests.some((url) => url.searchParams.get('from') === '2030-01-15T23:00:00.000Z')).toBe(true));
+    expect(slotRequests.some((url) => url.searchParams.get('from') === '2030-01-15T23:00:00.000Z' && url.searchParams.get('cursor') === 'old-cursor')).toBe(false);
   });
 });

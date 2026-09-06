@@ -52,14 +52,16 @@ export function ClinicianDetailPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const timezone = viewerTimezone();
   const defaultDate = formatDate(new Date(), timezone);
-  const date = searchParams.get('date') ?? defaultDate;
-  const [cursor, setCursor] = useState<string>();
-  useEffect(() => { if (!searchParams.get('date')) { const next = new URLSearchParams(searchParams); next.set('date', defaultDate); setSearchParams(next, { replace: true }); } }, [defaultDate, searchParams, setSearchParams]);
+  const hasDate = searchParams.has('date');
+  const date = hasDate ? searchParams.get('date') ?? '' : defaultDate;
+  const slotScope = `${id ?? ''}:${date}`;
+  const [slotCursor, setSlotCursor] = useState<{ scope: string; value?: string }>({ scope: slotScope });
+  const cursor = slotCursor.scope === slotScope ? slotCursor.value : undefined;
+  useEffect(() => { if (!hasDate) { const next = new URLSearchParams(searchParams); next.set('date', defaultDate); setSearchParams(next, { replace: true }); } }, [defaultDate, hasDate, searchParams, setSearchParams]);
   const window = useMemo(() => availabilityWindowForDate(date, timezone), [date, timezone]);
-  useEffect(() => { setCursor(undefined); }, [date, id]);
   const clinician = useClinician(id);
   const slots = useSlots(id, window && { ...window, cursor });
-  const setDate = (value: string) => { const next = new URLSearchParams(searchParams); next.set('date', value); setCursor(undefined); setSearchParams(next); };
+  const setDate = (value: string) => { const next = new URLSearchParams(searchParams); next.set('date', value); setSearchParams(next); };
   return <section aria-labelledby="clinician-title" className="space-y-8">
     {clinician.isPending && <div role="status" aria-busy="true">Loading clinician</div>}
     {clinician.isError && <div role="alert" className="error-message"><p>{clinician.error instanceof Error ? clinician.error.message : 'We could not load this clinician.'}</p><Button onClick={() => void clinician.refetch()}>Try again</Button></div>}
@@ -69,7 +71,7 @@ export function ClinicianDetailPage() {
       {window && slots.isPending && <div role="status" aria-busy="true">Loading available times</div>}
       {slots.isError && <div role="alert" className="error-message"><p>{slots.error instanceof Error ? slots.error.message : 'We could not load available times.'}</p><Button onClick={() => void slots.refetch()}>Try again</Button></div>}
       {slots.data && <BookingForm slots={slots.data.items} timezone={timezone} formatSlot={(slot) => displayTime(slot.startAt, timezone)} />}
-      {slots.data?.nextCursor && <Button variant="outline" onClick={() => setCursor(slots.data?.nextCursor ?? undefined)}>More available times</Button>}
+      {slots.data?.nextCursor && <Button variant="outline" onClick={() => setSlotCursor({ scope: slotScope, value: slots.data?.nextCursor ?? undefined })}>More available times</Button>}
     </>}
   </section>;
 }

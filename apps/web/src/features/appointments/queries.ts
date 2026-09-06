@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AppointmentSchema, PageSchema, type BookInput, type CancelInput } from '@portal/contracts';
+import { AppointmentSchema, PageSchema, type Appointment, type BookInput, type CancelInput, type Page } from '@portal/contracts';
 
 import { ApiClientError } from '../../lib/api';
 import { useApiClient, useSession } from '../auth/auth-provider';
@@ -14,6 +14,23 @@ export class BookingReconciliationError extends Error {
 }
 
 export type BookingOutcome = 'confirmed' | 'not-confirmed';
+
+async function reconcileBooking(api: ReturnType<typeof useApiClient>, slotId: string): Promise<BookingOutcome> {
+  const seenCursors = new Set<string>();
+  let cursor: string | undefined;
+  for (let pageNumber = 0; pageNumber < 100; pageNumber += 1) {
+    const query = new URLSearchParams({ limit: '100' });
+    if (cursor) query.set('cursor', cursor);
+    const page = await api(`/appointments?${query}`, {}, AppointmentPageSchema);
+    if (page.items.some((appointment) => appointment.slotId === slotId && appointment.status === 'booked')) return 'confirmed';
+    const nextCursor = page.nextCursor;
+    if (!nextCursor) return 'not-confirmed';
+    if (!nextCursor.trim() || seenCursors.has(nextCursor)) throw new BookingReconciliationError();
+    seenCursors.add(nextCursor);
+    cursor = nextCursor;
+  }
+  throw new BookingReconciliationError();
+}
 
 export function useAppointments(cursor?: string) {
   const api = useApiClient();
@@ -40,12 +57,9 @@ export function useBookAppointment() {
       } catch (error) {
         if (!(error instanceof ApiClientError) || error.code !== 'NETWORK_ERROR') throw error;
         try {
-          const appointments = await api('/appointments?limit=100', {}, AppointmentPageSchema);
           // This endpoint is server-scoped to the authenticated caller, so a booked
           // record for the selected slot is necessarily the current patient's booking.
-          return appointments.items.some((appointment) => appointment.slotId === input.slotId && appointment.status === 'booked')
-            ? 'confirmed'
-            : 'not-confirmed';
+          return await reconcileBooking(api, input.slotId);
         } catch {
           throw new BookingReconciliationError();
         }
@@ -73,7 +87,11 @@ export function useCancelAppointment() {
     mutationKey: [sub, 'appointments', 'cancel'],
     mutationFn: ({ appointmentId, withdrawSlot = false }: { appointmentId: string } & CancelInput) =>
       api(`/appointments/${appointmentId}/cancel`, { method: 'POST', body: JSON.stringify({ withdrawSlot }) }, AppointmentSchema),
-    onSuccess: async () => {
+    onSuccess: async (cancelledAppointment) => {
+      queryClient.setQueriesData<Page<Appointment>>({ queryKey: [sub, 'appointments'] }, (page) => page && {
+        ...page,
+        items: page.items.map((appointment) => appointment.id === cancelledAppointment.id ? cancelledAppointment : appointment),
+      });
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: [sub, 'appointments'] }),
         queryClient.invalidateQueries({ queryKey: [sub, 'slots'] }),

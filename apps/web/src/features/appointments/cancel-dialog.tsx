@@ -5,14 +5,15 @@ import { Button } from '../../components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogTitle, DialogTrigger } from '../../components/ui/dialog';
 import { useCancelAppointment } from './queries';
 
-export function CancelDialog({ appointment, onCancelled }: { appointment: Appointment; onCancelled(): void }) {
+export function CancelDialog({ appointment, onCancelled, onRestoreFocus }: { appointment: Appointment; onCancelled(appointment: Appointment): void; onRestoreFocus(): void }) {
   const [open, setOpen] = useState(false);
   const shouldRestoreFallbackFocus = useRef(false);
   const cancellation = useCancelAppointment();
   const cancel = async () => {
     try {
-      await cancellation.mutateAsync({ appointmentId: appointment.id, withdrawSlot: false });
+      const cancelledAppointment = await cancellation.mutateAsync({ appointmentId: appointment.id, withdrawSlot: false });
       shouldRestoreFallbackFocus.current = true;
+      onCancelled(cancelledAppointment);
       setOpen(false);
     } catch {
       // The server result remains authoritative. Keep the dialog open with a retryable error.
@@ -24,7 +25,7 @@ export function CancelDialog({ appointment, onCancelled }: { appointment: Appoin
       if (!shouldRestoreFallbackFocus.current) return;
       event.preventDefault();
       shouldRestoreFallbackFocus.current = false;
-      onCancelled();
+      onRestoreFocus();
     }}>
       <DialogTitle>Cancel appointment</DialogTitle>
       <DialogDescription id="cancel-description">Cancel your appointment with {appointment.clinicianDisplayName}? The time will become available to book again.</DialogDescription>
