@@ -8,13 +8,15 @@
   },
   "scripts": {
     "test": "vitest run",
-    "typecheck": "pnpm -r typecheck",
+    "typecheck": "pnpm -r typecheck && tsc -p scripts/tsconfig.json --noEmit",
     "lint": "eslint .",
     "build": "pnpm -r build",
-    "dev": "pnpm --parallel --filter @portal/web --filter @portal/api dev"
+    "dev": "pnpm --parallel --filter @portal/web --filter @portal/api dev",
+    "check:bundles": "node scripts/check-bundles.ts"
   },
   "devDependencies": {
     "@eslint/js": "9.36.0",
+    "esbuild": "0.25.12",
     "eslint": "9.36.0",
     "jsdom": "26.1.0",
     "typescript": "5.9.2",

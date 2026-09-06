@@ -6,6 +6,7 @@ cdk.out/
 .env.*
 !.env.example
 *.pem
+!infra/assets/rds-global-bundle.pem
 *.key
 .DS_Store
 playwright-report/

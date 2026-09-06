@@ -89,12 +89,14 @@ describe('private disposable PostgreSQL infrastructure', () => {
     });
     const [, proxy] = one(template, 'AWS::RDS::DBProxy');
     expect(proxy.Properties.Auth).toEqual([{ AuthScheme: 'SECRETS', IAMAuth: 'DISABLED', SecretArn: { Ref: secretId } }]);
-    const policies = Object.values(template.findResources('AWS::IAM::Policy'));
+    const roleId = proxy.Properties.RoleArn['Fn::GetAtt'][0];
+    const role = template.findResources('AWS::IAM::Role')[roleId]!;
+    const policies = Object.values(template.findResources('AWS::IAM::Policy')).filter((resource) =>
+      resource.Properties.Roles.some((value: { Ref: string }) => value.Ref === roleId));
     expect(policies).toHaveLength(1);
     expect(policies[0]!.Properties.PolicyDocument.Statement).toEqual([{
       Action: ['secretsmanager:GetSecretValue', 'secretsmanager:DescribeSecret'], Effect: 'Allow', Resource: { Ref: secretId },
     }]);
-    const [roleId, role] = one(template, 'AWS::IAM::Role');
     expect(proxy.Properties.RoleArn).toEqual({ 'Fn::GetAtt': [roleId, 'Arn'] });
     expect(policies[0]!.Properties.Roles).toEqual([{ Ref: roleId }]);
     expect(role.Properties.ManagedPolicyArns).toBeUndefined();

@@ -41,8 +41,10 @@ describe('Cognito managed login', () => {
       SmsConfiguration: Match.absent(),
     });
     template.resourceCountIs('AWS::Cognito::IdentityPool', 0);
-    // The only IAM role is the existing RDS Proxy role; identity must add none.
-    template.resourceCountIs('AWS::IAM::Role', 1);
+    // API/maintenance roles may exist; Cognito must add no identity or SMS role.
+    const roles = template.findResources('AWS::IAM::Role');
+    expect(Object.keys(roles).filter((id) => id.startsWith('Identity'))).toEqual([]);
+    expect(JSON.stringify(roles)).not.toMatch(/cognito-identity\.amazonaws\.com|cognito-idp\.amazonaws\.com/);
   });
 
   it('allows only public code OAuth with exactly the frontend scopes and short token validity', () => {

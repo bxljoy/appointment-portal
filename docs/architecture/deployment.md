@@ -1,8 +1,10 @@
 # Disposable deployment and database boundaries
 
-The CDK application is in `infra/`. It provisions the private data foundation;
-identity, API functions, migrations, frontend publication, and lifecycle commands
-are added by subsequent implementation tasks. No deployment is performed by tests.
+The CDK application is in `infra/`. It provisions the private data foundation,
+Cognito identity, three feature Lambdas, an HTTP API, the CloudFront/S3 frontend,
+and bounded operational resources. Migration execution, frontend publication,
+and lifecycle commands are added by subsequent implementation tasks. No deployment
+is performed by tests.
 
 ## Configuration and offline synthesis
 
@@ -95,3 +97,95 @@ stack destruction as proof. See [CloudFormation deletion policies](https://docs.
 and the [Secrets Manager deletion API](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_DeleteSecret.html).
 Shared CDK bootstrap resources remain outside this application stack and must be
 preserved unless separately verified as project exclusive.
+
+## Edge, API, and publication contract
+
+`ApiConstruct` consumes the data and identity constructs and exposes `httpApi`,
+`functions` (profiles, availability, appointments), and the direct origin `apiUrl`.
+Each feature uses Node 24 ARM64, 512 MiB, a 15-second timeout, reserved concurrency
+five, the isolated subnets, and the API security group. Application-secret IAM
+access is unchanged between phases. AWS SDK clients are included in the ESM bundles;
+Node built-ins and pg's unused lazy `pg-native` alternative are the only externals.
+The RDS public CA asset and its provenance live in `infra/assets/`.
+
+All ten approved routes retain the `/api` prefix and explicitly require the Cognito
+issuer, app-client audience, and `portal/access` scope. There is no anonymous
+default route, CORS wildcard, or separate direct-origin authentication path. The
+default stage permits an average ten requests/second with a burst of twenty.
+Local development calls `/api` through Vite's local proxy; direct cross-origin use
+of the deployed API from localhost is not enabled.
+
+`WebConstruct` exposes `bucket`, `distribution`, and `frontendUrl`. S3 blocks all
+public access, requires TLS, has no website endpoint or versioning, and allows
+CloudFront reads only through distribution-scoped origin access control. Both
+`/api` and `/api/*` use the API origin over TLS 1.2, all HTTP methods, disabled
+caching, and `ALL_VIEWER_EXCEPT_HOST_HEADER`. Authorization, cookies, and query
+parameters reach API Gateway; the viewer Host is replaced by the origin Host.
+
+Only the frontend default behavior runs the SPA function. It recognizes the
+current React page routes and leaves API paths, assets, files, and unknown paths
+alone. There is no global error-to-index mapping. The shell and public config
+use a cache-disabled behavior; `/assets/*` can cache only as allowed by origin
+metadata, with zero minimum/default TTL and a one-year maximum.
+
+The later publisher must apply this S3 metadata, rather than relying on browser
+or CloudFront defaults:
+
+| Objects | Cache-Control | Publication rule |
+| --- | --- | --- |
+| `index.html`, `config.json` | `no-cache, max-age=0, must-revalidate` | Publish after assets; config contains only public ready-phase outputs |
+| Vite content-hashed JS/CSS under `assets/` | `public, max-age=31536000, immutable` | Upload new hashes first; never overwrite an existing hash with different bytes |
+| Other public files | `no-cache, max-age=0, must-revalidate` | Do not label unhashed files immutable |
+
+Keep prior hashed assets during a publication so open tabs can finish their
+current version. Use correct Content-Type metadata. The Vite manifest is build
+input for publication, not a required public object. Do not publish bootstrap
+configuration or treat a successful synthesis as proof the app role is provisioned.
+
+The response policy sets HSTS, nosniff, DENY framing, no-referrer, and disables
+camera/microphone/geolocation. CSP permits scripts, images, fonts, and ordinary
+assets only from the same origin. `connect-src` adds only the concrete Cognito
+managed-login and regional issuer origins used by the OIDC client. Frames, object
+embeds, and base URI changes are denied. The sole inline exception is
+`style-src 'self' 'unsafe-inline'`: the existing Radix Dialog dependency
+`react-remove-scroll-bar` injects a viewport-specific style element to lock page
+scrolling. Scripts still require `'self'`, with no inline/eval or external script
+permission. Review the style exception when that UI dependency changes.
+
+## Operations and stable outputs
+
+API feature logs and access logs use named `/appointment-portal/<stack>/api/...`
+groups. The proxy group is `/aws/rds/proxy/<proxy-name>`. CDK's S3 emptying provider
+also receives an explicit named maintenance log group. Every group retains one
+week and is deleted with the stack, including the maintenance group. The provider
+is a CDK lifecycle function, separate from the three application features.
+
+The access log is one JSON object with gateway `requestId`, normalized `routeKey`,
+status, response length, integration latency, and response latency. The existing
+Lambda adapter carries `event.requestContext.requestId` into its completion log
+and response correlation header. API functions explicitly select Lambda's JSON
+logging format. Join the two log streams on the adapter's request ID. It logs
+operation, duration, status, and a safe error code; tokens, query strings, caller
+claims, request/response payloads, and database errors are excluded.
+
+Each feature has Errors and Throttles alarms; the API has a 5xx alarm. Each alarms
+on one or more events within one minute and treats missing data as nonbreaching.
+There are no notification subscriptions. The dashboard covers API latency and
+4xx/5xx, Lambda duration/errors/throttles, database connections, proxy client and
+database connections, and average proxy borrow latency in microseconds. RDS Proxy
+metrics use the documented `AWS/RDS` namespace and `ProxyName` dimension.
+
+Exact stack output names are `FrontendUrl`, `ApiUrl`, `DistributionId`,
+`WebBucketName`, `UserPoolId`, `ClientId`, `Issuer`, `CognitoDomain`, `ProxyName`,
+and `DatabaseId`. `MigrationFunctionName` is added with its real resource in Task 14.
+`FrontendUrl` and `CognitoDomain` are HTTPS origins with no trailing slash;
+`ApiUrl` is the direct API Gateway base endpoint, while browser config uses `/api`.
+
+Build the API Lambdas and frontend before `pnpm check:bundles`. The guard reads
+each feature's esbuild import metadata, rejects local/test inputs or unbundled SDK
+dependencies, imports each actual handler, and scans all frontend artifacts for
+local-auth code and identities. CDK tests separately inspect and import the real
+deployment assets, including their CA files. Run `pnpm test infra/test` for both
+phases and `pnpm --filter @portal/infra synth` with explicit offline context.
+The root pins esbuild so CDK can find it at the monorepo bundling boundary. Nested
+`pnpm` invocations must resolve the same pinned 11.22.0 version as the outer command.
