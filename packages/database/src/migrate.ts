@@ -48,12 +48,16 @@ export const migrate = async (
       'SELECT name, checksum FROM schema_migrations',
     );
     const checksums = new Map(recorded.rows.map((row) => [row.name, row.checksum]));
+    const migrationsByName = new Map(migrations.map((migration) => [migration.name, migration]));
     const applied: string[] = [];
 
-    for (const migration of migrations) {
-      const existingChecksum = checksums.get(migration.name);
-      if (existingChecksum !== undefined && existingChecksum !== migration.checksum) {
-        throw new Error(`Migration checksum mismatch for ${migration.name}`);
+    for (const record of recorded.rows) {
+      const migration = migrationsByName.get(record.name);
+      if (!migration) {
+        throw new Error(`Applied migration file missing: ${record.name}`);
+      }
+      if (record.checksum !== migration.checksum) {
+        throw new Error(`Migration checksum mismatch for ${record.name}`);
       }
     }
 

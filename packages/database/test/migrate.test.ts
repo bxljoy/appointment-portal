@@ -44,6 +44,26 @@ test('rejects an applied migration whose SQL file changes', async () => {
   }
 });
 
+test('rejects an applied migration whose SQL file is missing', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'portal-migrations-'));
+  try {
+    const name = '001_initial.sql';
+    const source = await readFile(join(migrationsDirectory, name), 'utf8');
+    await writeFile(join(directory, name), source);
+
+    await withEmptyTestDb(async (pool) => {
+      await migrate(pool, directory);
+      await rm(join(directory, name));
+
+      await expect(migrate(pool, directory)).rejects.toThrow(
+        'Applied migration file missing: 001_initial.sql',
+      );
+    });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('checks all applied migration hashes before it runs any pending file', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'portal-migrations-'));
   try {
