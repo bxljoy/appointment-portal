@@ -77,10 +77,6 @@ export const makeAppointmentsService = (deps: ServicesDeps): AppointmentsService
     if (!cancelInput.success) {
       throw validationError('withdrawSlot', 'The cancellation request is invalid.');
     }
-    if (user.role === 'patient' && cancelInput.data.withdrawSlot) {
-      throw new AppError(403, 'FORBIDDEN', 'Patients cannot withdraw availability slots.');
-    }
-
     return inTransaction(deps.pool, async (client) => {
       const slotId = await findAppointmentSlotId(client, appointmentId);
       if (!slotId) throw appointmentNotFound();
@@ -89,6 +85,9 @@ export const makeAppointmentsService = (deps: ServicesDeps): AppointmentsService
       const appointment = await lockAppointment(client, appointmentId);
       if (!slot || !appointment || appointment.slotId !== slot.id || !canAccess(user, appointment.patientId, slot.clinicianId)) {
         throw appointmentNotFound();
+      }
+      if (user.role === 'patient' && cancelInput.data.withdrawSlot) {
+        throw new AppError(403, 'FORBIDDEN', 'Patients cannot withdraw availability slots.');
       }
 
       if (appointment.status === 'cancelled') {

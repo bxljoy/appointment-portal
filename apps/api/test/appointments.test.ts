@@ -128,6 +128,26 @@ test('allows only the owner or assigned clinician to cancel before start', async
   });
 });
 
+test('conceals foreign and missing appointments from patient withdrawal requests', async () => {
+  await withTestDb(async (pool) => {
+    const { patient, secondPatient, slot } = await seedScenario(pool);
+    const service = makeAppointmentsService({ pool, clock });
+    const appointment = await service.book(patient, { slotId: slot.id });
+
+    await expect(service.cancel(secondPatient, appointment.id, { withdrawSlot: true })).rejects.toMatchObject({
+      status: 404,
+      code: 'NOT_FOUND',
+    });
+    await expect(service.cancel(secondPatient, randomUUID(), { withdrawSlot: true })).rejects.toMatchObject({
+      status: 404,
+      code: 'NOT_FOUND',
+    });
+    await expect(pool.query('SELECT status FROM appointments WHERE id=$1', [appointment.id])).resolves.toMatchObject({
+      rows: [{ status: 'booked' }],
+    });
+  });
+});
+
 test('rejects started cancellation and patient withdrawal without changing the booking', async () => {
   await withTestDb(async (pool) => {
     const { patient, slot } = await seedScenario(pool);
