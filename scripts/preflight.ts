@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { estimateCost, type CostRates } from './deploy.js';
+import type { AwsDemoInput } from './aws-lifecycle.js';
 
 export type PreflightInput = {
   account: string; region: string; postgresVersion: string;
@@ -16,6 +17,14 @@ export type PreflightProbe = {
   gitClean(): Promise<boolean>;
   costRates(input: { region: string; postgresVersion: string }): Promise<CostRates>;
 };
+
+export const toPreflightInput = (input: PreflightInput): PreflightInput => ({
+  account: input.account,
+  region: input.region,
+  postgresVersion: input.postgresVersion,
+  durationHours: input.durationHours,
+  maxCostUsd: input.maxCostUsd,
+});
 
 const inputSchema = z.strictObject({
   account: z.string().regex(/^\d{12}$/), region: z.string().regex(/^[a-z]{2}(?:-[a-z]+)+-[1-9]\d*$/),
@@ -41,6 +50,20 @@ export const runPreflight = async (raw: PreflightInput, probe: PreflightProbe) =
   return { account, region: input.region, versions, regional, unreservedConcurrency: unreserved, reservedConcurrencyRequired, cost };
 };
 
+type PreflightCliDependencies = {
+  readInput?: (path: string) => Promise<AwsDemoInput>;
+  makeProbe?: (input: AwsDemoInput) => PreflightProbe;
+  run?: typeof runPreflight;
+};
+
+export const runPreflightCli = async (configPath: string, dependencies: PreflightCliDependencies = {}) => {
+  const lifecycle = dependencies.readInput && dependencies.makeProbe ? undefined : await import('./aws-lifecycle.js');
+  const readInput = dependencies.readInput ?? lifecycle!.readAwsDemoInput;
+  const makeProbe = dependencies.makeProbe ?? lifecycle!.makeAwsPreflightProbe;
+  const full = await readInput(configPath);
+  return (dependencies.run ?? runPreflight)(toPreflightInput(full), makeProbe(full));
+};
+
 export type ProcessResult = { stdout: string; stderr: string };
 export type ProcessRunner = (executable: string, args: readonly string[], options?: { cwd?: string; env?: NodeJS.ProcessEnv }) => Promise<ProcessResult>;
 
@@ -59,9 +82,7 @@ export const runProcess: ProcessRunner = (executable, args, options = {}) => new
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     if (process.argv.length !== 3) throw new Error('Expected one .runtime preflight configuration path.');
-    const { makeAwsPreflightProbe, readAwsDemoInput } = await import('./aws-lifecycle.js');
-    const full = await readAwsDemoInput(process.argv[2]!);
-    const report = await runPreflight(full, makeAwsPreflightProbe(full));
+    const report = await runPreflightCli(process.argv[2]!);
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : 'Preflight failed.'}\n`);

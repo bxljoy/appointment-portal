@@ -65,3 +65,9 @@ it('standalone verification maps all four aliases to deterministic private files
     expect(JSON.stringify(processMock.mock.calls)).not.toMatch(/password|patient-a@example\.com|sentinel/i);
   } finally { vi.unstubAllEnvs(); }
 });
+
+it('refuses an output-empty recovery manifest before starting standalone verification', async () => {
+  await writeFile(DEPLOYMENT_PATH, JSON.stringify({ ...manifest, phase: 'bootstrap', outputs: {}, resources: [] }), { mode: 0o600 });
+  await expect(verifyDeployment()).rejects.toThrow(/ready deployment manifest/i);
+  expect(processMock).not.toHaveBeenCalled();
+});

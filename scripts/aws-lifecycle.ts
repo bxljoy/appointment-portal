@@ -17,7 +17,7 @@ import { CognitoIdentityProviderClient, DescribeUserPoolClientCommand } from '@a
 import { z } from 'zod';
 import { invokeMigration } from './invoke-migration.js';
 import { provisionUsers, RuntimeCredentialStore, type ControlledAccount } from './provision.js';
-import { runPreflight, runProcess, type PreflightProbe, type ProcessRunner } from './preflight.js';
+import { runPreflight, runProcess, toPreflightInput, type PreflightProbe, type ProcessRunner } from './preflight.js';
 import { publishFrontend, type PublishFile } from './publish.js';
 import { APP_STACK, DELIVERY_STACK, PROJECT_TAG, QUALIFIER, TOOLKIT_STACK, deduplicateResources, saveDeploymentManifest, type DeploymentManifest, type InventoryAdapter, type InventoryPage, type ResourceRecord } from './lifecycle-types.js';
 import type { DemoConfig, DemoDependencies, StackInspection } from './deploy.js';
@@ -112,8 +112,7 @@ export const makeAwsDemoDependencies = (input: AwsDemoInput, clients = clientsFo
       activeManifest = manifest;
       await (manifestStore.save ?? (async (value) => (await import('./lifecycle-types.js')).saveDeploymentManifest(value)))(manifest);
     },
-    preflight: async () => { await runPreflight({ account: input.account, region: input.region, postgresVersion: input.postgresVersion,
-      durationHours: input.durationHours, maxCostUsd: input.maxCostUsd }, makeAwsPreflightProbe(input, clients, runner)); },
+    preflight: async () => { await runPreflight(toPreflightInput(input), makeAwsPreflightProbe(input, clients, runner)); },
     inspectApplication: async () => inspectStackOwnership(clients.cloudformation, APP_STACK),
     inspectBootstrap: async () => inspectStackOwnership(clients.cloudformation, TOOLKIT_STACK),
     bootstrap: async () => {
@@ -128,13 +127,17 @@ export const makeAwsDemoDependencies = (input: AwsDemoInput, clients = clientsFo
           '--outputs-file', outputPath, '--parameters', `${APP_STACK}:DeploymentPhase=${phase}`, ...contextArgs(input, phase, frontendUrl)]);
       } catch (error) {
         const live = await inspectStackOwnership(clients.cloudformation, APP_STACK);
-        if (live.exists && live.owned) await persistRecovery(live.phase ?? 'bootstrap', live.outputs ?? {}, []);
+        if (live.exists && live.owned && live.phase) await persistRecovery(live.phase, live.outputs ?? {}, []);
+        else await persistRecovery('bootstrap', {}, []);
         throw error;
       }
       const live = await inspectStackOwnership(clients.cloudformation, APP_STACK);
-      if (!live.exists || !live.owned) throw new Error('Deployed application stack does not have established ownership.');
+      if (!live.exists || !live.owned) {
+        await persistRecovery('bootstrap', {}, []);
+        throw new Error('Deployed application stack does not have established ownership.');
+      }
       if (live.phase !== phase) {
-        if (live.phase) await persistRecovery(live.phase, live.outputs ?? {}, []);
+        await persistRecovery('bootstrap', {}, []);
         throw new Error(`Live deployment phase does not match requested ${phase} phase.`);
       }
       await persistRecovery(live.phase, live.outputs ?? {}, []);

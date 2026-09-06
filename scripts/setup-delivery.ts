@@ -5,7 +5,7 @@ import { GetOpenIDConnectProviderCommand, IAMClient, ListOpenIDConnectProvidersC
 import { GetCallerIdentityCommand, STSClient } from '@aws-sdk/client-sts';
 import { z } from 'zod';
 import { listStackResources, makeAwsPreflightProbe, readAwsDemoInput } from './aws-lifecycle.js';
-import { runPreflight, runProcess, type ProcessRunner } from './preflight.js';
+import { runPreflight, runProcess, toPreflightInput, type PreflightProbe, type ProcessRunner } from './preflight.js';
 import { APP_STACK, DELIVERY_STACK, PROJECT_TAG, QUALIFIER, TOOLKIT_STACK, deduplicateResources, loadDeploymentManifest, saveDeploymentManifest,
   type DeploymentManifest, type ResourceRecord } from './lifecycle-types.js';
 import { readPrivateFile, writePrivateJson } from './private-file.js';
@@ -16,6 +16,8 @@ type SetupDeliveryDependencies = {
   iam?: Pick<IAMClient, 'send'>;
   runner?: ProcessRunner;
   preflight?: (config: Awaited<ReturnType<typeof readAwsDemoInput>>) => Promise<void>;
+  runPreflight?: typeof runPreflight;
+  makePreflightProbe?: (config: Awaited<ReturnType<typeof readAwsDemoInput>>) => PreflightProbe;
   loadManifest?: () => Promise<DeploymentManifest | undefined>;
   saveManifest?: (manifest: DeploymentManifest) => Promise<void>;
   listResources?: (client: Pick<CloudFormationClient, 'send'>, name: string, prefix: string) => Promise<ResourceRecord[]>;
@@ -36,7 +38,9 @@ export const setupDelivery = async (configPath: string, dependencies: SetupDeliv
   const listResources = dependencies.listResources ?? listStackResources;
   const writeResult = dependencies.writeResult ?? writePrivateJson;
   const readOutputs = dependencies.readOutputs ?? (async (path: string) => JSON.parse(await readPrivateFile(path)) as unknown);
-  await (dependencies.preflight ?? (async (input) => { await runPreflight(input, makeAwsPreflightProbe(input)); }))(config);
+  await (dependencies.preflight ?? (async (input) => {
+    await (dependencies.runPreflight ?? runPreflight)(toPreflightInput(input), (dependencies.makePreflightProbe ?? makeAwsPreflightProbe)(input));
+  }))(config);
   const prior = await loadManifest();
   if (prior && (prior.account !== config.account || prior.region !== config.region || prior.projectTag !== PROJECT_TAG ||
     prior.appStack !== APP_STACK || prior.toolkitStack !== TOOLKIT_STACK || prior.qualifier !== QUALIFIER || prior.sourceCommit !== config.sourceCommit)) {

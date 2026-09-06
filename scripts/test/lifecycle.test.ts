@@ -185,6 +185,41 @@ describe('disposable deployment lifecycle', () => {
     expect(clients.commands.some((command) => command.constructor.name === 'InvokeCommand')).toBe(false);
   });
 
+  it('invalidates stale outputs when replacement and catch-time live inspection both find no application', async () => {
+    const stale = { ...manifest, phase: 'bootstrap' as const, outputs: {
+      ...manifest.outputs, MigrationFunctionName: 'deleted-function', UserPoolId: 'deleted-pool', ProxyName: 'deleted-proxy',
+    } };
+    let saved: typeof stale | typeof manifest = stale;
+    const saves: Array<typeof stale | typeof manifest> = [];
+    const clients = fakeAwsClients();
+    let inspection = 0;
+    const baseSend = clients.cloudformation.send.bind(clients.cloudformation);
+    clients.cloudformation.send = (async (command: object) => {
+      if (command.constructor.name === 'DescribeStacksCommand') {
+        inspection += 1;
+        if (inspection === 4) return { Stacks: [{ Tags: [{ Key: 'Project', Value: manifest.projectTag }] }] };
+        throw Object.assign(new Error('application absent'), { name: 'ValidationError' });
+      }
+      return baseSend(command as never);
+    }) as never;
+    let deployAttempts = 0;
+    const runtime = makeAwsDemoDependencies({ account: manifest.account, region: manifest.region, postgresVersion: '17.6', durationHours: 1,
+      maxCostUsd: 1, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), accountsFile: '/unused', priceReport: '/unused' }, clients,
+    async (_executable, args) => {
+      if (args.includes('deploy')) throw new Error(++deployAttempts === 1 ? 'partial replacement failed' : 'retry deploy reached');
+      return { stdout: '', stderr: '' };
+    }, { load: async () => saved, save: async (value) => { saved = structuredClone(value) as typeof saved; saves.push(saved); } });
+    runtime.preflight = async () => {};
+    await expect(runtime.inspectApplication()).resolves.toEqual({ exists: false, owned: false });
+    await runtime.loadManifest();
+    await expect(runtime.deploy('bootstrap')).rejects.toThrow('partial replacement failed');
+    expect(saves).toHaveLength(1);
+    expect(saved).toMatchObject({ phase: 'bootstrap', outputs: {}, resources: [] });
+    await expect(runDemo(runtime)).rejects.toThrow('retry deploy reached');
+    expect(deployAttempts).toBe(2);
+    expect(clients.commands.some((command) => command.constructor.name === 'InvokeCommand')).toBe(false);
+  });
+
   it('resumes a partial bootstrap by redeploying bootstrap mode before migration', async () => {
     const partial = { ...manifest, phase: 'bootstrap' as const, outputs: {} };
     const fake = deps(partial);
@@ -384,7 +419,47 @@ describe('disposable deployment lifecycle', () => {
     }, { load: async () => saved, save: async (value) => { saved = structuredClone(value); } });
     try {
       await expect(runtime.deploy(requestedPhase, requestedPhase === 'ready' ? manifest.outputs.FrontendUrl : undefined)).rejects.toThrow(/phase/i);
-      expect(saved?.phase).not.toBe(requestedPhase);
+      expect(saved).toMatchObject({ phase: 'bootstrap', outputs: {}, resources: [] });
+    } finally {
+      if (priorOutputs === undefined) await rm(outputPath, { force: true });
+      else await writeFile(outputPath, priorOutputs, { mode: 0o600 });
+    }
+  });
+
+  it.each([
+    { observedPhase: undefined, label: 'missing' },
+    { observedPhase: 'bootstrap' as const, label: 'mismatched' },
+  ])('invalidates a prior ready manifest when the post-deploy live phase is $label', async ({ observedPhase }) => {
+    let priorOutputs: string | undefined;
+    const outputPath = new URL('../../.runtime/cdk-outputs.json', import.meta.url);
+    try { priorOutputs = await readFile(outputPath, 'utf8'); } catch { priorOutputs = undefined; }
+    await mkdir(new URL('../../.runtime/', import.meta.url), { recursive: true, mode: 0o700 });
+    let saved = structuredClone(manifest);
+    const stack = { Tags: [{ Key: 'Project', Value: manifest.projectTag }, { Key: 'SourceCommit', Value: 'a'.repeat(40) }],
+      ...(observedPhase ? { Parameters: [{ ParameterKey: 'DeploymentPhase', ParameterValue: observedPhase }] } : {}) };
+    const clients = fakeAwsClients({ DescribeStacksCommand: [{ Stacks: [stack] }, { Stacks: [stack] }, { Stacks: [stack] }] });
+    let deployAttempts = 0;
+    const runtime = makeAwsDemoDependencies({ account: manifest.account, region: manifest.region, postgresVersion: '17.6', durationHours: 1,
+      maxCostUsd: 1, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), accountsFile: '/unused', priceReport: '/unused' }, clients,
+    async (_executable, args) => {
+      if (args.includes('deploy')) {
+        deployAttempts += 1;
+        if (deployAttempts === 1) {
+          await writeFile(outputPath, JSON.stringify({ [manifest.appStack]: manifest.outputs }));
+          return { stdout: '', stderr: '' };
+        }
+        throw new Error('retry deploy reached');
+      }
+      return { stdout: '', stderr: '' };
+    }, { load: async () => saved, save: async (value) => { saved = structuredClone(value); } });
+    runtime.preflight = async () => {};
+    try {
+      await runtime.loadManifest();
+      await expect(runtime.deploy('ready', manifest.outputs.FrontendUrl)).rejects.toThrow(/phase/i);
+      expect(saved).toMatchObject({ phase: 'bootstrap', outputs: {}, resources: [] });
+      await expect(runDemo(runtime)).rejects.toThrow('retry deploy reached');
+      expect(deployAttempts).toBe(2);
+      expect(clients.commands.some((command) => command.constructor.name === 'InvokeCommand' || command.constructor.name === 'PutObjectCommand')).toBe(false);
     } finally {
       if (priorOutputs === undefined) await rm(outputPath, { force: true });
       else await writeFile(outputPath, priorOutputs, { mode: 0o600 });
