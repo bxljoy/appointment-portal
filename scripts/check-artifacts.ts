@@ -1,24 +1,43 @@
 import { execFileSync } from 'node:child_process';
-import { lstat, readFile, readdir } from 'node:fs/promises';
-import { join, relative, resolve } from 'node:path';
+import { constants } from 'node:fs';
+import { lstat, open, readdir, realpath } from 'node:fs/promises';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const productionDirectories = ['apps/web/dist', 'apps/api/dist/lambda', 'packages/database/dist/lambda', 'infra/cdk.out/bootstrap', 'infra/cdk.out/ready'];
 
 export async function checkArtifacts(root: string, trackedFiles?: string[]) {
+  const checkout = await realpath(root);
+  if (!(await lstat(checkout)).isDirectory()) throw new Error('Artifact inspection requires a checkout directory.');
+  const checkedInfo = async (path: string) => {
+    const child = relative(checkout, path);
+    if (!child || child === '..' || child.startsWith(`..${sep}`) || isAbsolute(child)) throw new Error('Artifact path escapes the checkout.');
+    let current = checkout;
+    for (const component of child.split(sep)) {
+      current = join(current, component);
+      if ((await lstat(current)).isSymbolicLink()) throw new Error('Production artifacts must not contain symlinks.');
+    }
+    if (await realpath(path) !== path) throw new Error('Artifact path resolves outside its checked location.');
+    return lstat(path);
+  };
   const findings: string[] = [];
   for (const directory of productionDirectories) {
     const inspect = async (path: string): Promise<void> => {
-      const info = await lstat(path);
-      if (info.isSymbolicLink()) throw new Error('Production artifacts must not contain symlinks.');
+      const info = await checkedInfo(path);
       if (info.isDirectory()) { for (const name of await readdir(path)) await inspect(join(path, name)); return; }
       if (!info.isFile()) throw new Error('Production artifacts must contain only regular files.');
-      const contents = await readFile(path, 'utf8');
-      if (forbiddenArtifact(relative(root, path), contents)) findings.push(relative(root, path));
+      const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+      try {
+        const opened = await handle.stat();
+        const checked = await checkedInfo(path);
+        if (!opened.isFile() || opened.dev !== checked.dev || opened.ino !== checked.ino) throw new Error('Artifact changed during inspection.');
+        const contents = await handle.readFile('utf8');
+        if (forbiddenArtifact(relative(checkout, path), contents)) findings.push(relative(checkout, path));
+      } finally { await handle.close(); }
     };
-    await inspect(join(root, directory));
+    await inspect(join(checkout, directory));
   }
-  const tracked = trackedFiles ?? execFileSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' }).split('\0').filter(Boolean);
+  const tracked = trackedFiles ?? execFileSync('git', ['ls-files', '-z'], { cwd: checkout, encoding: 'utf8' }).split('\0').filter(Boolean);
   for (const path of tracked) if (sensitiveFile(path)) findings.push(path);
   if (findings.length) throw new Error(`Unsafe artifacts or tracked runtime files: ${[...new Set(findings)].join(', ')}`);
 }
@@ -36,7 +55,7 @@ function forbiddenArtifact(path: string, contents: string): boolean {
 }
 function sensitiveFile(path: string): boolean {
   if (path === '.env.example' || path === 'infra/assets/rds-global-bundle.pem') return false;
-  return /(?:^|\/)(?:\.runtime|\.auth|playwright-report|test-results|traces|storage-state)(?:\/|$)|(?:^|\/)\.env(?:\.|$)|\.(?:key|pem)$/.test(path);
+  return /^reports(?:\/|$)|(?:^|\/)(?:\.runtime|\.auth|playwright-reports?|playwright-results|blob-report|test-results|traces?|storage(?:-state)?|error-context)(?:\/|$)|(?:^|\/)error-context\.md$|(?:^|\/)\.env(?:\.|$)|\.(?:key|pem)$/.test(path);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

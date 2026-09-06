@@ -46,6 +46,8 @@ jobs:
         run: pnpm --filter @portal/contracts build
       - name: Typecheck
         run: pnpm typecheck
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
       - name: Unit, component, PostgreSQL integration and infrastructure assertions
         run: pnpm test
       - name: Production builds
@@ -60,7 +62,5 @@ jobs:
           pnpm check:artifacts
       - name: Dependency audit
         run: pnpm audit --audit-level=high
-      - name: Install Chromium
-        run: pnpm exec playwright install --with-deps chromium
       - name: Local browser and accessibility journeys
         run: pnpm exec playwright test --project=local-desktop --project=local-mobile

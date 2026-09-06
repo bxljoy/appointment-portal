@@ -15,6 +15,11 @@ corepack pnpm@11.22.0 exec playwright test --project=local-desktop --project=loc
 
 The default `DATABASE_URL` is the Compose endpoint. An override must point to a
 loopback PostgreSQL administrator connection with permission to create databases.
+Only `postgres:`/`postgresql:` URLs with an explicit user/database, a normal port,
+and host `127.0.0.1`, `localhost` or `[::1]` are accepted. Query parameters, fragments,
+encoded/socket hosts and remote hosts are rejected before constructing a pool.
+Both pools receive explicit validated fields; no connection string is reparsed by
+`pg`, and an empty password cannot inherit an unrelated `PGPASSWORD`.
 The browser fixture creates a new `portal_e2e_<random UUID>` database for each
 worker, applies the real migrations, and resets only that database between tests.
 It seeds Alice Patient, Bea Patient, Casey Clinician and Devon Clinician, with two
@@ -80,13 +85,20 @@ only deployable frontend/Lambda outputs and both synthesized assemblies for loca
 authentication and known test credential sentinels. It also rejects secret literals
 in generated JSON and sensitive runtime paths tracked by Git. Documentation and
 source examples are outside its content scan. Negative fixtures intentionally
-contaminate temporary outputs; missing builds and symlinks fail closed. The guard
+contaminate temporary outputs; missing builds and symlinks fail closed. The checkout
+root is canonicalized; every component below it is checked before traversal/read,
+including ancestors such as `apps/web`. Opened files are checked again before
+their contents are read. Root `reports/`, Playwright report/results/error-context
+directories and storage directories cannot be tracked; Markdown documentation
+examples remain exempt. Run the guard in a checkout without concurrent writers. The guard
 is targeted leak prevention, not a claim to detect every possible secret.
 
 The GitHub `Checks / quality` job runs on PR and push with `contents: read`, no
 persisted checkout credentials and no cloud/production secrets. Its PostgreSQL 17
 service is an ephemeral, loopback-published test database using local trust auth.
-Installation freezes the lockfile and disables dependency scripts. No reports,
+Installation freezes the lockfile and disables dependency scripts. Chromium is
+installed before the full suite, which includes a synthetic local failed-login
+regression against Playwright's actual artifact recorder. No reports,
 credentials or traces are uploaded. Repository branch protection can require the
 check when repository administration is configured; creating this workflow does
 not itself enable branch protection.
@@ -133,10 +145,22 @@ origin. The managed-login selectors must be verified against the actual deployme
 PORTAL_E2E_AWS=1 corepack pnpm@11.22.0 exec playwright test --project=aws
 ```
 
-AWS traces, videos, screenshots and saved storage state are disabled by default.
-Keep them disabled for controlled real-auth accounts. Authentication failures use
-a generic error rather than printing credential-file or authentication payloads.
-The AWS project was not executed during local implementation.
+AWS traces, videos, screenshots, HARs and saved storage state are prohibited by the
+automatic fixture before credentials can be entered. Only the list reporter is
+accepted: HTML/JSON/blob reports can include successful credential-fill step values.
+Config evaluation sets Playwright's `PLAYWRIGHT_NO_COPY_PROMPT=1` opt-out before
+workers start whenever AWS is enabled. In pinned Playwright 1.63 this disables the
+automatic failure-page ARIA snapshot independently of trace/video/screenshots;
+generic `error-context.md` diagnostics can still exist. The fixture also checks that
+the opt-out remains enabled. Authentication failures use a generic error.
+
+The full suite runs a runtime-generated synthetic password through a real loopback
+HTTP login that returns 401, deliberately fails after submission, scans the actual
+failure outputs, and deletes the temporary data even on failure. A second run proves
+that a JSON reporter override fails before credential submission. No real account
+or AWS endpoint is used. This executable regression must pass on any Playwright
+upgrade, because the opt-out is an upstream environment switch rather than a typed
+public configuration option. The deployed AWS smoke project remains unexecuted.
 
 ## Dependency and manual accessibility review
 

@@ -19,3 +19,9 @@ storage-state/
 cdk.context.json
 *.local
 reports/
+playwright-reports/
+playwright-results/
+blob-report/
+error-context/
+error-context.md
+storage/

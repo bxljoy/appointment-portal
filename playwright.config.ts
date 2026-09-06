@@ -1,5 +1,9 @@
 import { defineConfig } from '@playwright/test';
 
+// Playwright captures failure-page ARIA snapshots independently of trace/video/screenshot.
+// Set its upstream opt-out during config evaluation, before any AWS worker can enter credentials.
+if (process.env.PORTAL_E2E_AWS === '1') process.env.PLAYWRIGHT_NO_COPY_PROMPT = '1';
+
 export default defineConfig({
   testDir: './tests/e2e',
   testMatch: '**/*.spec.ts',

@@ -4,9 +4,14 @@ import { isAbsolute, relative, resolve } from 'node:path';
 import { test as base, expect, type Page, type Locator } from '@playwright/test';
 import { z } from 'zod';
 import { accounts, names, startLocalPortal, type Account } from './local-auth.setup.js';
+import { assertAwsArtifactPrivacy } from './aws-artifact-privacy.js';
 
 type Portal = Awaited<ReturnType<typeof startLocalPortal>>;
-export const test = base.extend<{ scenario: Portal }, { portal: Portal | undefined }>({
+export const test = base.extend<{ scenario: Portal; artifactPrivacy: void }, { portal: Portal | undefined }>({
+  artifactPrivacy: [async ({ trace, video, screenshot, storageState, contextOptions }, use, info) => {
+    if (info.project.name === 'aws') assertAwsArtifactPrivacy(info.config.reporter, { trace, video, screenshot, storageState, contextOptions });
+    await use();
+  }, { auto: true }],
   portal: [async ({ browserName }, use, info) => {
     if (browserName !== 'chromium') throw new Error('Portal browser fixtures require Chromium.');
     if (info.project.name === 'aws') { await use(undefined); return; }

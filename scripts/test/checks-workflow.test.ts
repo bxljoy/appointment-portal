@@ -21,6 +21,7 @@ function validate(text: string) {
   for (const gate of ['install --frozen-lockfile --ignore-scripts', 'pnpm lint', 'pnpm typecheck', 'pnpm test', 'pnpm build', 'build:lambdas', 'pnpm check:infra', 'pnpm check:bundles', 'pnpm check:artifacts', 'pnpm audit', 'playwright install --with-deps chromium', 'playwright test --project=local-desktop --project=local-mobile']) expect(commands).toContain(gate);
   expect(commands.indexOf('pnpm --filter @portal/contracts build')).toBeGreaterThan(commands.indexOf('install --frozen-lockfile --ignore-scripts'));
   expect(commands.indexOf('pnpm --filter @portal/contracts build')).toBeLessThan(commands.indexOf('pnpm typecheck'));
+  expect(commands.indexOf('playwright install --with-deps chromium')).toBeLessThan(commands.indexOf('pnpm test'));
   expect(commands).not.toMatch(/\|\|\s*true|--project=aws/);
 }
 

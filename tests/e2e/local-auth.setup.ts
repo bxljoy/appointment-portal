@@ -3,7 +3,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { stripVTControlCharacters } from 'node:util';
-import { Pool } from 'pg';
+import { Pool, type PoolConfig } from 'pg';
 import { startLocalServer } from '../../apps/api/src/local/server.js';
 import { migrate } from '../../packages/database/src/migrate.js';
 import { seedDemo } from '../../packages/database/src/seed.js';
@@ -50,12 +50,26 @@ async function startWeb(apiUrl: string) {
   } catch (error) { await stopChild(child); throw error; }
 }
 
+function localDatabaseOptions(value: string): PoolConfig {
+  try {
+    const url = new URL(value);
+    const port = url.port ? Number(url.port) : 5432;
+    const user = decodeURIComponent(url.username);
+    const password = decodeURIComponent(url.password);
+    const database = decodeURIComponent(url.pathname.slice(1));
+    if (!['postgres:', 'postgresql:'].includes(url.protocol) || !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) ||
+        url.search || url.hash || !Number.isInteger(port) || port < 1 || port > 65535 || !user || user.includes('\0') ||
+        !database || database.includes('/') || database.includes('\0') || password.includes('\0')) throw new Error();
+    // Never forward connectionString: pg reparses query parameters and lets them override the validated authority.
+    // The callback also prevents an empty local password from falling back to an unrelated PGPASSWORD.
+    return { host: url.hostname === '[::1]' ? '::1' : url.hostname, port, user, password: () => password, database, ssl: false, connectionTimeoutMillis: 5_000 };
+  } catch { throw new Error('E2E requires a loopback PostgreSQL administrator connection without URL overrides.'); }
+}
+
 export async function startLocalPortal() {
-  const adminUrl = new URL(process.env.DATABASE_URL ?? 'postgres://portal:portal@127.0.0.1:54329/portal');
-  if (!['127.0.0.1', 'localhost', '[::1]'].includes(adminUrl.hostname)) throw new Error('E2E requires a loopback PostgreSQL administrator connection.');
+  const connection = localDatabaseOptions(process.env.DATABASE_URL ?? 'postgres://portal:portal@127.0.0.1:54329/portal');
   const database = `portal_e2e_${randomUUID().replaceAll('-', '')}`;
-  const admin = new Pool({ connectionString: adminUrl.toString() });
-  const databaseUrl = new URL(adminUrl); databaseUrl.pathname = `/${database}`;
+  const admin = new Pool(connection);
   let created = false;
   let pool: Pool | undefined;
   let api: Awaited<ReturnType<typeof startLocalServer>> | undefined;
@@ -69,7 +83,7 @@ export async function startLocalPortal() {
   };
   try {
     await admin.query(`CREATE DATABASE ${database}`); created = true;
-    pool = new Pool({ connectionString: databaseUrl.toString() });
+    pool = new Pool({ ...connection, database });
     await migrate(pool, fileURLToPath(new URL('../../packages/database/migrations', import.meta.url)));
     process.env.PORTAL_LOCAL_AUTH = '1';
     process.env.NODE_ENV = 'development';
