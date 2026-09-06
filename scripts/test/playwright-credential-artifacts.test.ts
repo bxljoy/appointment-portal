@@ -13,7 +13,7 @@ async function filesBelow(directory: string): Promise<string[]> {
   return (await Promise.all(entries.map((entry) => entry.isDirectory() ? filesBelow(join(directory, entry.name)) : [join(directory, entry.name)]))).flat();
 }
 
-it.each(['list', 'json'] as const)('keeps runtime credentials out of actual failure artifacts with the %s reporter', async (reporter) => {
+it.each(['list', 'json', 'debug-protocol', 'debug-file', 'debug-file-protocol', 'environment-reporter'] as const)('keeps runtime credentials out of actual failure outputs with %s', async (mode) => {
   const password = randomUUID() + randomUUID();
   let submitted = false;
   const server = createServer(async (request, response) => {
@@ -40,7 +40,7 @@ it.each(['list', 'json'] as const)('keeps runtime credentials out of actual fail
     await writeFile(configPath, `import config from ${JSON.stringify(pathToFileURL(join(root, 'playwright.config.ts')).href)};
       const aws = config.projects.find(project => project.name === 'aws');
       export default { ...config, testDir: ${JSON.stringify(directory)}, outputDir: ${JSON.stringify(join(directory, 'results'))},
-        reporter: ${reporter === 'list' ? 'config.reporter' : "'json'"},
+        reporter: ${mode === 'json' ? "'json'" : 'config.reporter'},
         projects: [{ ...aws, testIgnore: [] }] };`);
     await writeFile(join(directory, 'failed-login.spec.ts'), `import { test, expect } from ${JSON.stringify(pathToFileURL(join(root, 'tests/e2e/fixtures.ts')).href)};
       test('synthetic failed login @aws', async ({ page }) => {
@@ -52,23 +52,25 @@ it.each(['list', 'json'] as const)('keeps runtime credentials out of actual fail
         throw new Error('Synthetic post-fill login failure');
       });`);
     const env: NodeJS.ProcessEnv = { ...process.env, PORTAL_E2E_AWS: '1', PORTAL_SYNTHETIC_URL: `http://127.0.0.1:${address.port}`, PORTAL_SYNTHETIC_PASSWORD: password };
+    if (mode === 'debug-protocol' || mode === 'debug-file-protocol') env.DEBUG = 'pw:protocol';
+    if (mode === 'debug-file' || mode === 'debug-file-protocol') env.DEBUG_FILE = join(directory, 'protocol.log');
+    if (mode === 'environment-reporter') env.PW_TEST_REPORTER = 'json';
     delete env.PLAYWRIGHT_NO_COPY_PROMPT; // The repository config must establish privacy before the worker starts.
     child = spawn(process.execPath, ['node_modules/@playwright/test/cli.js', 'test', '--config', configPath, '--project=aws'], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
     let output = ''; child.stdout?.on('data', (chunk: Buffer) => { output += chunk.toString(); }); child.stderr?.on('data', (chunk: Buffer) => { output += chunk.toString(); });
     const timeout = setTimeout(() => child?.kill('SIGKILL'), 45_000);
     const [exitCode] = await once(child, 'exit').finally(() => clearTimeout(timeout));
     expect(exitCode).toBe(1);
-    expect(submitted, 'Only the list reporter may reach the real local credential submission.').toBe(reporter === 'list');
     const files = await filesBelow(directory);
     const contexts = files.filter((path) => path.endsWith('error-context.md'));
     expect(contexts.length).toBeGreaterThan(0);
-    expect(output.includes(reporter === 'list' ? 'Synthetic post-fill login failure' : 'AWS browser artifacts must be disabled')).toBe(true);
     const leaked: string[] = output.includes(password) ? ['process output'] : [];
     for (const path of files) {
       const contents = await readFile(path);
       if (contents.includes(Buffer.from(password))) leaked.push(relative(directory, path));
     }
-    expect(leaked, 'Generated files must never retain the runtime password.').toEqual([]);
+    expect({ submitted, leaked }, 'Only the normal list reporter may submit; outputs must never retain the runtime password.').toEqual({ submitted: mode === 'list', leaked: [] });
+    expect(output.includes(mode === 'list' ? 'Synthetic post-fill login failure' : 'AWS browser artifacts must be disabled')).toBe(true);
     expect(files.map((path) => relative(directory, path)).filter((path) => /\.zip$|storage.?state|\.webm$|\.png$|\.html$/.test(path))).toEqual([]);
     for (const path of contexts) expect((await readFile(path, 'utf8')).includes('# Page snapshot')).toBe(false);
   } finally {

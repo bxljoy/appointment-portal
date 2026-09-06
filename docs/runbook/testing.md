@@ -19,7 +19,12 @@ Only `postgres:`/`postgresql:` URLs with an explicit user/database, a normal por
 and host `127.0.0.1`, `localhost` or `[::1]` are accepted. Query parameters, fragments,
 encoded/socket hosts and remote hosts are rejected before constructing a pool.
 Both pools receive explicit validated fields; no connection string is reparsed by
-`pg`, and an empty password cannot inherit an unrelated `PGPASSWORD`.
+`pg`, and an empty password cannot inherit an unrelated `PGPASSWORD`. Startup
+settings pin the public search path, replication off, UTF-8 and the application
+name `portal-e2e`; query results use text mode. These settings override inherited
+`PGOPTIONS`, `PGREPLICATION`, `PGCLIENT_ENCODING`, `PGAPPNAME` and connection defaults
+without changing the caller's environment. Empty/false startup options are insufficient
+for several fields in the pinned `pg` release because its parser uses truthy fallbacks.
 The browser fixture creates a new `portal_e2e_<random UUID>` database for each
 worker, applies the real migrations, and resets only that database between tests.
 It seeds Alice Patient, Bea Patient, Casey Clinician and Devon Clinician, with two
@@ -148,6 +153,11 @@ PORTAL_E2E_AWS=1 corepack pnpm@11.22.0 exec playwright test --project=aws
 AWS traces, videos, screenshots, HARs and saved storage state are prohibited by the
 automatic fixture before credentials can be entered. Only the list reporter is
 accepted: HTML/JSON/blob reports can include successful credential-fill step values.
+The AWS fixture also rejects any nonempty `DEBUG`, `DEBUG_FILE`, `PWDEBUG` (including
+its npm aliases), Playwright implementation/runner/reporter debug switches, injected
+`PW_TEST_REPORTER`, dashboard/controller debugging and module instrumentation.
+Protocol logging can expose raw password input even when ordinary artifacts are off;
+diagnostics must be disabled before controlled credentials are entered.
 Config evaluation sets Playwright's `PLAYWRIGHT_NO_COPY_PROMPT=1` opt-out before
 workers start whenever AWS is enabled. In pinned Playwright 1.63 this disables the
 automatic failure-page ARIA snapshot independently of trace/video/screenshots;
@@ -156,9 +166,11 @@ the opt-out remains enabled. Authentication failures use a generic error.
 
 The full suite runs a runtime-generated synthetic password through a real loopback
 HTTP login that returns 401, deliberately fails after submission, scans the actual
-failure outputs, and deletes the temporary data even on failure. A second run proves
-that a JSON reporter override fails before credential submission. No real account
-or AWS endpoint is used. This executable regression must pass on any Playwright
+failure outputs, and deletes the temporary data even on failure. Additional runs
+prove that JSON/environment reporter overrides, protocol debug logging, a debug file,
+and combined protocol/file logging fail before credential submission, with no password
+in stdout/stderr or any generated file. No real account or AWS endpoint is used.
+These executable regressions must pass on any Playwright
 upgrade, because the opt-out is an upstream environment switch rather than a typed
 public configuration option. The deployed AWS smoke project remains unexecuted.
 

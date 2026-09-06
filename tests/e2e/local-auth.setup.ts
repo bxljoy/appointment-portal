@@ -62,7 +62,14 @@ function localDatabaseOptions(value: string): PoolConfig {
         !database || database.includes('/') || database.includes('\0') || password.includes('\0')) throw new Error();
     // Never forward connectionString: pg reparses query parameters and lets them override the validated authority.
     // The callback also prevents an empty local password from falling back to an unrelated PGPASSWORD.
-    return { host: url.hostname === '[::1]' ? '::1' : url.hostname, port, user, password: () => password, database, ssl: false, connectionTimeoutMillis: 5_000 };
+    // pg's `config[key] || env || default` also requires truthy startup settings: ''/false would inherit PGOPTIONS/PGREPLICATION.
+    const startup = {
+      options: '-c search_path=public', replication: 'false', client_encoding: 'utf8',
+      application_name: 'portal-e2e', fallback_application_name: 'portal-e2e', binary: false,
+      statement_timeout: 0, lock_timeout: 0, idle_in_transaction_session_timeout: 0, query_timeout: 0,
+      keepAlive: false, keepAliveInitialDelayMillis: 0,
+    } as const;
+    return { ...startup, host: url.hostname === '[::1]' ? '::1' : url.hostname, port, user, password: () => password, database, ssl: false, connectionTimeoutMillis: 5_000 };
   } catch { throw new Error('E2E requires a loopback PostgreSQL administrator connection without URL overrides.'); }
 }
 
