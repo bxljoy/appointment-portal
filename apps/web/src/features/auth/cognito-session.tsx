@@ -1,6 +1,7 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useState, type ReactNode } from 'react';
+import { FocusMain } from '../../components/ui/focus-main';
 import { AuthProvider, useAuth } from 'react-oidc-context';
-import { createOidcSettings, completeSignin, cognitoLogoutUrl, safeReturnPath } from '../../lib/auth';
+import { createOidcSettings, completeSignin, cognitoLogoutUrl, createSigninArgs } from '../../lib/auth';
 import type { CognitoConfig } from '../../lib/config';
 import { SessionProvider, type Session } from './auth-provider';
 import { SessionLoading } from './session-loading';
@@ -17,9 +18,14 @@ function CognitoSession({ config, children }: { config: CognitoConfig; children:
   const auth = useAuth();
   const [signingOut, setSigningOut] = useState(false);
   useEffect(() => auth.events.addAccessTokenExpired(() => { void auth.removeUser(); }), [auth.events, auth.removeUser]);
-  useEffect(() => {
-    if (auth.error && window.location.pathname === '/auth/callback') window.history.replaceState(null, '', '/auth/callback');
-  }, [auth.error]);
+  useLayoutEffect(() => {
+    // The library intentionally ignores incomplete callback pairs. Wait for its
+    // initialization/processing to settle, then remove any remaining payload.
+    // Successful callbacks already restored their validated return path.
+    if (!auth.isLoading && window.location.pathname === '/auth/callback') {
+      window.history.replaceState(null, '', '/auth/callback');
+    }
+  }, [auth.isLoading]);
   const active = auth.isAuthenticated && !signingOut;
   const accessToken = active ? auth.user?.access_token ?? null : null;
   const session: Session = {
@@ -27,7 +33,7 @@ function CognitoSession({ config, children }: { config: CognitoConfig; children:
     accessToken,
     isLoading: auth.isLoading || signingOut,
     signIn: async (returnPath) => {
-      await auth.signinRedirect({ state: { returnPath: safeReturnPath(returnPath) } });
+      await auth.signinRedirect(createSigninArgs(returnPath));
     },
     signOut: async () => {
       setSigningOut(true);
@@ -37,6 +43,6 @@ function CognitoSession({ config, children }: { config: CognitoConfig; children:
     },
   };
   return <SessionProvider session={session} getHeaders={(): Record<string, string> => accessToken ? { Authorization: `Bearer ${accessToken}` } : {}}>
-    {session.isLoading ? <SessionLoading /> : auth.error ? <main className="page-width"><p role="alert" className="error-message">We could not complete authentication. Please sign in again.</p><SignInPage /></main> : children}
+    {session.isLoading ? <SessionLoading /> : auth.error ? <FocusMain className="page-width"><p role="alert" className="error-message">We could not complete authentication. Please sign in again.</p><SignInPage /></FocusMain> : children}
   </SessionProvider>;
 }

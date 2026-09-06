@@ -1,3 +1,4 @@
+import { FocusMain } from '../components/ui/focus-main';
 import { useEffect, useRef, type ReactNode } from 'react';
 import { BrowserRouter, Link, Navigate, Outlet, Route, Routes, useLocation, useOutletContext } from 'react-router-dom';
 import type { Me, Role } from '@portal/contracts';
@@ -26,11 +27,11 @@ function RouteIntroduction({ title, description }: { title: string; description:
 }
 function SignedOutPage() {
   const session = useSession();
-  return session.sub ? <Navigate to="/clinicians" replace /> : <main className="page-width"><SignInPage signedOut /></main>;
+  return session.sub ? <Navigate to="/clinicians" replace /> : <FocusMain className="page-width"><SignInPage signedOut /></FocusMain>;
 }
 function CallbackPage() {
   const session = useSession();
-  return session.sub ? <Navigate to="/clinicians" replace /> : <main className="page-width"><SignInPage /></main>;
+  return session.sub ? <Navigate to="/clinicians" replace /> : <FocusMain className="page-width"><SignInPage /></FocusMain>;
 }
 export function AppRoutes() {
   return <><RouteFocus /><Routes>

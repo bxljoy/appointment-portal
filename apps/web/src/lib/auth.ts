@@ -1,4 +1,4 @@
-import { InMemoryWebStorage, WebStorageStateStore, type User, type UserManagerSettings } from 'oidc-client-ts';
+import { InMemoryWebStorage, WebStorageStateStore, type User, type UserManagerSettings, type SigninRedirectArgs } from 'oidc-client-ts';
 import type { CognitoConfig } from './config';
 
 export const safeReturnPath = (path: unknown): string => {
@@ -13,6 +13,13 @@ export const safeReturnPath = (path: unknown): string => {
     return '/clinicians';
   }
 };
+
+export function createSigninArgs(returnPath?: string): SigninRedirectArgs {
+  // Generate a new 256-bit nonce for every redirect. The OIDC library persists it
+  // only with the PKCE transaction and checks the ID token against that value.
+  const nonce = Array.from(crypto.getRandomValues(new Uint8Array(32)), (byte) => byte.toString(16).padStart(2, '0')).join('');
+  return { nonce, state: { returnPath: safeReturnPath(returnPath) } };
+}
 
 export function createOidcSettings(config: CognitoConfig): UserManagerSettings {
   const domain = config.cognitoDomain.replace(/\/$/, '');

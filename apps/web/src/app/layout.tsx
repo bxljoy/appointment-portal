@@ -1,3 +1,4 @@
+import { FocusMain } from '../components/ui/focus-main';
 import { useEffect, useLayoutEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -13,7 +14,7 @@ export function Layout() {
   const location = useLocation();
   const [expired, setExpired] = useState(false);
   useLayoutEffect(() => { if (expired) queryClient.clear(); }, [expired, queryClient]);
-  if (expired) return <main id="main-content" className="page-width"><SignInPage expired returnPath={safeReturnPath(`${location.pathname}${location.search}${location.hash}`)} /></main>;
+  if (expired) return <FocusMain className="page-width"><SignInPage expired returnPath={safeReturnPath(`${location.pathname}${location.search}${location.hash}`)} /></FocusMain>;
   return <AuthenticatedLayout onExpired={() => setExpired(true)} />;
 }
 
@@ -26,8 +27,8 @@ function AuthenticatedLayout({ onExpired }: { onExpired: () => void }) {
   useEffect(() => {
     if (unauthorized) onExpired();
   }, [unauthorized, onExpired]);
-  if (profile.isPending) return <main id="main-content" className="page-width content-loading" aria-busy="true" role="status" aria-label="Loading your profile"><p className="eyebrow">Appointment portal</p><h1>Opening your workspace</h1><div className="loading-bar" /><p>Loading your profile and available services.</p></main>;
-  if (profile.isError) return <main id="main-content" className="auth-panel"><h1>We could not open your workspace</h1><p role="alert">{profile.error instanceof ApiClientError ? profile.error.message : 'Please try again in a moment.'}</p><Button onClick={() => void profile.refetch()}>Try again</Button></main>;
+  if (profile.isPending) return <FocusMain className="page-width content-loading" aria-busy="true" role="status" aria-label="Loading your profile"><p className="eyebrow">Appointment portal</p><h1>Opening your workspace</h1><div className="loading-bar" /><p>Loading your profile and available services.</p></FocusMain>;
+  if (profile.isError) return <FocusMain className="auth-panel"><h1>We could not open your workspace</h1><p role="alert">{profile.error instanceof ApiClientError ? profile.error.message : 'Please try again in a moment.'}</p><Button onClick={() => void profile.refetch()}>Try again</Button></FocusMain>;
   const me = profile.data;
   async function signOut() {
     setLogoutFailed(false);
