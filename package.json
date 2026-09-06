@@ -1,0 +1,23 @@
+{
+  "name": "appointment-portal",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.22.0",
+  "engines": {
+    "node": "24.0.1"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "eslint .",
+    "build": "pnpm -r build",
+    "dev": "pnpm --parallel --filter @portal/web --filter @portal/api dev"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.36.0",
+    "eslint": "9.36.0",
+    "typescript": "5.9.2",
+    "typescript-eslint": "8.44.1",
+    "vitest": "3.2.4"
+  }
+}

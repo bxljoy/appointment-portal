@@ -12,3 +12,7 @@ playwright-report/
 test-results/
 .auth/
 .worktrees/
+.runtime/
+cdk.context.json
+*.local
+reports/
