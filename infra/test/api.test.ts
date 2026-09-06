@@ -86,7 +86,7 @@ describe.each(['bootstrap', 'ready'] as const)('%s API trust boundary', (phase) 
 
   it('bounds three Node 24 feature functions to the proxy network and application credential only', () => {
     const { template } = synth(phase);
-    const functions = Object.values(template.findResources('AWS::Lambda::Function')).filter((resource) => resource.Properties.VpcConfig);
+    const functions = Object.values(template.findResources('AWS::Lambda::Function')).filter((resource) => /^Appointment portal \w+ API$/.test(resource.Properties.Description ?? ''));
     expect(functions).toHaveLength(3);
     const applicationId = Object.keys(template.findResources('AWS::SecretsManager::Secret')).find((id) => id.includes('ApplicationSecret'))!;
     const adminId = Object.keys(template.findResources('AWS::SecretsManager::Secret')).find((id) => id.includes('AdminSecret'))!;

@@ -38,10 +38,14 @@ export const migrate = async (
   const migrations = await readMigrations(directory);
   const client = await pool.connect();
   let locked = false;
+  let transaction = false;
+  let destroyClient = false;
 
   try {
     await client.query('SELECT pg_advisory_lock($1)', [advisoryLockId]);
     locked = true;
+    await client.query('BEGIN');
+    transaction = true;
     await ensureLedger(client);
 
     const recorded = await client.query<{ name: string; checksum: string }>(
@@ -67,38 +71,30 @@ export const migrate = async (
         continue;
       }
 
-      try {
-        await client.query('BEGIN');
-        await client.query(migration.sql);
-        await client.query('INSERT INTO schema_migrations(name, checksum) VALUES ($1, $2)', [
-          migration.name,
-          migration.checksum,
-        ]);
-        await client.query('COMMIT');
-        applied.push(migration.name);
-      } catch (error) {
-        await client.query('ROLLBACK');
-        throw error;
-      }
+      await client.query(migration.sql);
+      await client.query('INSERT INTO schema_migrations(name, checksum) VALUES ($1, $2)', [
+        migration.name, migration.checksum,
+      ]);
+      applied.push(migration.name);
     }
 
-    if (afterMigrate) {
-      try {
-        await client.query('BEGIN');
-        await afterMigrate(client);
-        await client.query('COMMIT');
-      } catch (error) {
-        await client.query('ROLLBACK');
-        throw error;
-      }
-    }
-
+    await afterMigrate?.(client);
+    await client.query('COMMIT');
+    transaction = false;
     return applied;
-  } finally {
-    if (locked) {
-      await client.query('SELECT pg_advisory_unlock($1)', [advisoryLockId]);
+  } catch (error) {
+    if (transaction) {
+      try { await client.query('ROLLBACK'); } catch { destroyClient = true; }
     }
-    client.release();
+    throw error;
+  } finally {
+    try {
+      if (locked) await client.query('SELECT pg_advisory_unlock($1)', [advisoryLockId]);
+    } catch {
+      destroyClient = true;
+    } finally {
+      client.release(destroyClient);
+    }
   }
 };
 

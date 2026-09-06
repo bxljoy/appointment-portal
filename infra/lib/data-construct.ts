@@ -1,9 +1,16 @@
-import { Duration, RemovalPolicy } from 'aws-cdk-lib';
+import { join } from 'node:path';
+import { Duration, RemovalPolicy, Stack } from 'aws-cdk-lib';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as rds from 'aws-cdk-lib/aws-rds';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { Construct } from 'constructs';
+import { Architecture, LoggingFormat, Runtime } from 'aws-cdk-lib/aws-lambda';
+import { NodejsFunction, OutputFormat } from 'aws-cdk-lib/aws-lambda-nodejs';
+import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import { parsePortalConfig, type PortalConfig } from './config.js';
+import { workspaceRoot } from './workspace-path.js';
+
+const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 
 export class DataConstruct extends Construct {
   readonly vpc: ec2.Vpc;
@@ -14,6 +21,7 @@ export class DataConstruct extends Construct {
   readonly applicationSecret: secretsmanager.Secret;
   readonly apiSecurityGroup: ec2.SecurityGroup;
   readonly migrationSecurityGroup: ec2.SecurityGroup;
+  readonly migrationFunction: NodejsFunction;
 
   constructor(scope: Construct, id: string, props: { config: PortalConfig }) {
     super(scope, id);
@@ -82,5 +90,38 @@ export class DataConstruct extends Construct {
       privateDnsEnabled: true, subnets: isolated, securityGroups: [endpointSecurityGroup],
       open: false, lookupSupportedAzs: false,
     });
+
+    this.migrationFunction = new NodejsFunction(this, 'Migration', {
+      description: 'Appointment portal private migration and seed',
+      entry: join(workspaceRoot, 'packages/database/src/lambda.ts'), projectRoot: workspaceRoot,
+      depsLockFilePath: join(workspaceRoot, 'pnpm-lock.yaml'),
+      runtime: Runtime.NODEJS_24_X, architecture: Architecture.ARM_64,
+      memorySize: 512, timeout: Duration.seconds(120), reservedConcurrentExecutions: 1,
+      vpc: this.vpc, vpcSubnets: isolated, securityGroups: [this.migrationSecurityGroup], loggingFormat: LoggingFormat.JSON,
+      logGroup: new LogGroup(this, 'MigrationLogs', {
+        logGroupName: `/appointment-portal/${Stack.of(this).stackName}/migration`,
+        retention: RetentionDays.ONE_WEEK, removalPolicy: RemovalPolicy.DESTROY,
+      }),
+      environment: {
+        ADMIN_DATABASE_SECRET_ARN: this.adminSecret.secretArn, APPLICATION_DATABASE_SECRET_ARN: this.applicationSecret.secretArn,
+        DATABASE_HOST: this.database.dbInstanceEndpointAddress, DATABASE_NAME: 'portal', DATABASE_PORT: '5432',
+        DATABASE_CA_BUNDLE_PATH: '/var/task/certs/rds-global-bundle.pem', MIGRATIONS_PATH: '/var/task/migrations',
+      },
+      bundling: {
+        target: 'node24', format: OutputFormat.ESM, bundleAwsSDK: true, externalModules: [], metafile: true,
+        banner: "import { createRequire } from 'node:module';const require=createRequire(import.meta.url);",
+        commandHooks: {
+          beforeBundling: () => [], beforeInstall: () => [],
+          afterBundling: (input, output) => [
+            `mkdir -p ${shellQuote(join(output, 'certs'))}`,
+            `cp ${shellQuote(join(input, 'infra/assets/rds-global-bundle.pem'))} ${shellQuote(join(output, 'certs/rds-global-bundle.pem'))}`,
+            `cp -R ${shellQuote(join(input, 'packages/database/migrations'))} ${shellQuote(join(output, 'migrations'))}`,
+            `node ${shellQuote(join(input, 'infra/scripts/normalize-metafile.mjs'))} ${shellQuote(join(output, 'index.meta.json'))}`,
+          ],
+        },
+      },
+    });
+    this.adminSecret.grantRead(this.migrationFunction);
+    this.applicationSecret.grantRead(this.migrationFunction);
   }
 }

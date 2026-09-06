@@ -4,10 +4,19 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  pg-format@1.0.4: 62dab1f96cc5f3932739cd560e77272a8c23882941ec475a3211f494a32923d2
+
 importers:
 
   .:
     devDependencies:
+      '@aws-sdk/client-cognito-identity-provider':
+        specifier: 3.1127.0
+        version: 3.1127.0
+      '@aws-sdk/client-lambda':
+        specifier: 3.1127.0
+        version: 3.1127.0
       '@eslint/js':
         specifier: 9.36.0
         version: 9.36.0
@@ -20,6 +29,9 @@ importers:
       jsdom:
         specifier: 26.1.0
         version: 26.1.0(supports-color@7.2.0)
+      tsx:
+        specifier: 4.20.6
+        version: 4.20.6
       typescript:
         specifier: 5.9.2
         version: 5.9.2
@@ -29,6 +41,9 @@ importers:
       vitest:
         specifier: 3.2.4
         version: 3.2.4(@types/node@26.4.1)(jiti@2.7.0)(jsdom@26.1.0(supports-color@7.2.0))(lightningcss@1.33.0)(supports-color@7.2.0)(tsx@4.20.6)
+      zod:
+        specifier: 4.1.12
+        version: 4.1.12
 
   apps/api:
     dependencies:
@@ -173,16 +188,28 @@ importers:
 
   packages/database:
     dependencies:
+      '@aws-sdk/client-secrets-manager':
+        specifier: 3.1127.0
+        version: 3.1127.0
       '@portal/contracts':
         specifier: workspace:*
         version: link:../contracts
       pg:
         specifier: 8.16.3
         version: 8.16.3
+      pg-format:
+        specifier: 1.0.4
+        version: 1.0.4(patch_hash=62dab1f96cc5f3932739cd560e77272a8c23882941ec475a3211f494a32923d2)
+      zod:
+        specifier: 4.1.12
+        version: 4.1.12
     devDependencies:
       '@types/pg':
         specifier: 8.15.5
         version: 8.15.5
+      '@types/pg-format':
+        specifier: 1.0.5
+        version: 1.0.5
       tsx:
         specifier: 4.20.6
         version: 4.20.6
@@ -207,6 +234,14 @@ packages:
     bundledDependencies:
       - jsonschema
       - semver
+
+  '@aws-sdk/client-cognito-identity-provider@3.1127.0':
+    resolution: {integrity: sha512-h0mINSImCeIbXxvr3b4e1ae5ZU5bedsyXUH13peYmhtjOW/fH/vZWwf01hnv371WAa/P4HlqaYJ3aF7yJ2BD3g==}
+    engines: {node: '>=20.0.0'}
+
+  '@aws-sdk/client-lambda@3.1127.0':
+    resolution: {integrity: sha512-fyfvc2mtIz9Wrb7ThJWhSb2fa5GFafMM1H9kzUR69wZ7U8woW+9RNjpTT2gVYpyiMT5JkcNyjAZDvlOzswYbig==}
+    engines: {node: '>=20.0.0'}
 
   '@aws-sdk/client-secrets-manager@3.1127.0':
     resolution: {integrity: sha512-sgTX/mZ0kYrFukwm238T5OyRKT3QxUS9VdSl4iD8pu9vyZxS+PpZgASCdTJoRvdv99NPOvEaXcQ1ecsCjnqNug==}
@@ -1396,6 +1431,9 @@ packages:
   '@types/node@26.4.1':
     resolution: {integrity: sha512-k97ENvZWtvA6yqz5/FS6a7duDgOPEeOQOc2iKS/nY6mX6qJUKtLnWzQS+Xj6tXweyj6ZcTAK2Qecetnvi9nCLA==}
 
+  '@types/pg-format@1.0.5':
+    resolution: {integrity: sha512-i+oEEJEC+1I3XAhgqtVp45Faj8MBbV0Aoq4rHsHD7avgLjyDkaWKObd514g0Q/DOUkdxU0P4CQ0iq2KR4SoJcw==}
+
   '@types/pg@8.15.5':
     resolution: {integrity: sha512-LF7lF6zWEKxuT3/OR8wAZGzkg4ENGXFNyiV/JeOt9z5B+0ZVwbql9McqX5c/WStFq1GaGso7H1AzP/qSzmlCKQ==}
 
@@ -2197,6 +2235,10 @@ packages:
   pg-connection-string@2.14.0:
     resolution: {integrity: sha512-XwWDGcLRGCXAR8F/AM5bG7Q+A3Wm2s6QeEjlOKZLlH3UYcguiqCWKyWXVag5TLTIjR7oOJUY8kcADaZgWPyLeg==}
 
+  pg-format@1.0.4:
+    resolution: {integrity: sha512-YyKEF78pEA6wwTAqOUaHIN/rWpfzzIuMh9KdAhc3rSLQ/7zkRFcCgYBAEGatDstLyZw4g0s9SNICmaTGnBVeyw==}
+    engines: {node: '>=4.0'}
+
   pg-int8@1.0.1:
     resolution: {integrity: sha512-WCtabS6t3c8SkpDBUlb1kjOs7l66xsGdKpIPZsg4wR+B3+u9UAum2odSsF9tnvxg80h4ZxLWMy4pRjOsFIqQpw==}
     engines: {node: '>=4.0.0'}
@@ -2740,6 +2782,28 @@ snapshots:
   '@aws-cdk/asset-node-proxy-agent-v6@2.1.2': {}
 
   '@aws-cdk/cloud-assembly-schema@54.22.0': {}
+
+  '@aws-sdk/client-cognito-identity-provider@3.1127.0':
+    dependencies:
+      '@aws-sdk/core': 3.977.9
+      '@aws-sdk/credential-provider-node': 3.972.82
+      '@aws-sdk/types': 3.974.5
+      '@smithy/core': 3.33.3
+      '@smithy/fetch-http-handler': 5.8.0
+      '@smithy/node-http-handler': 4.12.1
+      '@smithy/types': 4.18.0
+      tslib: 2.8.1
+
+  '@aws-sdk/client-lambda@3.1127.0':
+    dependencies:
+      '@aws-sdk/core': 3.977.9
+      '@aws-sdk/credential-provider-node': 3.972.82
+      '@aws-sdk/types': 3.974.5
+      '@smithy/core': 3.33.3
+      '@smithy/fetch-http-handler': 5.8.0
+      '@smithy/node-http-handler': 4.12.1
+      '@smithy/types': 4.18.0
+      tslib: 2.8.1
 
   '@aws-sdk/client-secrets-manager@3.1127.0':
     dependencies:
@@ -3611,6 +3675,8 @@ snapshots:
     dependencies:
       undici-types: 8.3.0
 
+  '@types/pg-format@1.0.5': {}
+
   '@types/pg@8.15.5':
     dependencies:
       '@types/node': 26.4.1
@@ -4405,6 +4471,8 @@ snapshots:
     optional: true
 
   pg-connection-string@2.14.0: {}
+
+  pg-format@1.0.4(patch_hash=62dab1f96cc5f3932739cd560e77272a8c23882941ec475a3211f494a32923d2): {}
 
   pg-int8@1.0.1: {}
 

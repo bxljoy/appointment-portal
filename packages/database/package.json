@@ -14,18 +14,23 @@
     "migrations"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node scripts/build-lambda.mjs",
+    "build:lambda": "node scripts/build-lambda.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "migrate": "tsx src/migrate.ts",
-    "seed": "tsx src/seed.ts",
+    "seed": "tsx src/seed-cli.ts",
     "test:integration": "vitest run test"
   },
   "dependencies": {
+    "@aws-sdk/client-secrets-manager": "3.1127.0",
     "@portal/contracts": "workspace:*",
-    "pg": "8.16.3"
+    "pg": "8.16.3",
+    "pg-format": "1.0.4",
+    "zod": "4.1.12"
   },
   "devDependencies": {
     "@types/pg": "8.15.5",
+    "@types/pg-format": "1.0.5",
     "tsx": "4.20.6"
   }
 }

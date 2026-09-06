@@ -1,8 +1,5 @@
-import { fileURLToPath } from 'node:url';
-import { resolve } from 'node:path';
-import { Pool } from 'pg';
+import type { Pool } from 'pg';
 import type { Role } from '@portal/contracts';
-import { migrate } from './migrate.js';
 
 export type SeedUser = {
   sub: string;
@@ -21,7 +18,8 @@ export const seedDemo = async (pool: Pool, users: SeedUser[], now: Date): Promis
         `INSERT INTO users(cognito_sub, display_name, role)
          VALUES ($1, $2, $3)
          ON CONFLICT (cognito_sub) DO UPDATE
-           SET display_name = EXCLUDED.display_name, role = EXCLUDED.role
+           SET display_name = EXCLUDED.display_name,
+               role = CASE WHEN users.role = 'clinician' THEN users.role ELSE EXCLUDED.role END
          RETURNING id`,
         [user.sub, user.displayName, user.role],
       );
@@ -55,26 +53,3 @@ export const seedDemo = async (pool: Pool, users: SeedUser[], now: Date): Promis
     client.release();
   }
 };
-
-const runCli = async (): Promise<void> => {
-  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-  try {
-    await migrate(pool, fileURLToPath(new URL('../migrations', import.meta.url)));
-    await seedDemo(
-      pool,
-      [
-        { sub: 'patient-a', displayName: 'Alice Patient', role: 'patient' },
-        { sub: 'patient-b', displayName: 'Bea Patient', role: 'patient' },
-        { sub: 'clinician-a', displayName: 'Casey Clinician', role: 'clinician' },
-        { sub: 'clinician-b', displayName: 'Devon Clinician', role: 'clinician' },
-      ],
-      new Date(),
-    );
-  } finally {
-    await pool.end();
-  }
-};
-
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  await runCli();
-}

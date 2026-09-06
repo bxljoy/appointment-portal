@@ -67,7 +67,7 @@ describe('bounded disposable operations', () => {
         Threshold: 1, ComparisonOperator: 'GreaterThanOrEqualToThreshold', Statistic: 'Sum', Period: 60 });
       expect(alarm.AlarmActions).toBeUndefined();
     }
-    const functions = Object.entries(template.findResources('AWS::Lambda::Function')).filter(([, resource]) => resource.Properties.VpcConfig);
+    const functions = Object.entries(template.findResources('AWS::Lambda::Function')).filter(([, resource]) => /^Appointment portal \w+ API$/.test(resource.Properties.Description ?? ''));
     for (const [id] of functions) for (const metric of ['Errors', 'Throttles']) {
       expect(alarms).toContainEqual(expect.objectContaining({ Namespace: 'AWS/Lambda', MetricName: metric,
         Dimensions: [{ Name: 'FunctionName', Value: { Ref: id } }] }));
@@ -97,11 +97,12 @@ describe('bounded disposable operations', () => {
   it.each(['bootstrap', 'ready'] as const)('%s exposes exact public/operation outputs and destroys every resource', (phase) => {
     const { stack, template } = synth(phase);
     const outputs = template.toJSON().Outputs;
-    expect(Object.keys(outputs).sort()).toEqual(['FrontendUrl', 'ApiUrl', 'DistributionId', 'WebBucketName', 'UserPoolId', 'ClientId', 'Issuer', 'CognitoDomain', 'ProxyName', 'DatabaseId'].sort());
+    expect(Object.keys(outputs).sort()).toEqual(['FrontendUrl', 'ApiUrl', 'DistributionId', 'WebBucketName', 'UserPoolId', 'ClientId', 'Issuer', 'CognitoDomain', 'ProxyName', 'DatabaseId', 'MigrationFunctionName'].sort());
     const output = (name: string, value: unknown) => expect(outputs[name].Value).toEqual(stack.resolve(value));
     output('UserPoolId', stack.identity.userPool.userPoolId); output('ClientId', stack.identity.appClient.userPoolClientId);
     output('Issuer', stack.identity.issuer); output('CognitoDomain', stack.identity.domain.baseUrl());
     output('ProxyName', stack.data.proxy.dbProxyName); output('DatabaseId', stack.data.database.instanceIdentifier);
+    output('MigrationFunctionName', stack.data.migrationFunction.functionName);
     for (const resource of Object.values(template.toJSON().Resources) as { DeletionPolicy: string; UpdateReplacePolicy: string }[]) {
       expect(resource.DeletionPolicy).toBe('Delete'); expect(resource.UpdateReplacePolicy).toBe('Delete');
     }

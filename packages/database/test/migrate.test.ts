@@ -86,7 +86,7 @@ test('checks all applied migration hashes before it runs any pending file', asyn
   }
 });
 
-test('rolls back a failed afterMigrate callback independently of the schema migration', async () => {
+test('rolls back a failed afterMigrate callback together with the schema migration', async () => {
   await withEmptyTestDb(async (pool) => {
     await expect(
       migrate(pool, migrationsDirectory, async (client) => {
@@ -98,6 +98,7 @@ test('rolls back a failed afterMigrate callback independently of the schema migr
     await expect(
       pool.query("SELECT to_regclass('public.callback_setup') AS name"),
     ).resolves.toMatchObject({ rows: [{ name: null }] });
-    await expect(pool.query('SELECT name FROM schema_migrations')).resolves.toMatchObject({ rowCount: 2 });
+    await expect(pool.query("SELECT to_regclass('public.schema_migrations') AS ledger, to_regclass('public.users') AS users"))
+      .resolves.toMatchObject({ rows: [{ ledger: null, users: null }] });
   });
 });

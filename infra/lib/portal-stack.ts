@@ -39,6 +39,7 @@ export class PortalStack extends Stack {
       ClientId: this.identity.appClient.userPoolClientId, Issuer: this.identity.issuer,
       CognitoDomain: this.identity.domain.baseUrl(), ProxyName: this.data.proxy.dbProxyName,
       DatabaseId: this.data.database.instanceIdentifier,
+      MigrationFunctionName: this.data.migrationFunction.functionName,
     };
     for (const [name, value] of Object.entries(outputs)) new CfnOutput(this, name, { value });
     RemovalPolicies.of(this).destroy();

@@ -4,3 +4,5 @@ packages:
   - infra
 allowBuilds:
   esbuild: true
+patchedDependencies:
+  pg-format@1.0.4: patches/pg-format@1.0.4.patch

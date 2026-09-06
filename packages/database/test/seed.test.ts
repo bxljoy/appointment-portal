@@ -2,6 +2,18 @@ import { expect, test } from 'vitest';
 import { seedDemo } from '../src/seed.js';
 import { seedScenario, withTestDb } from './harness.js';
 
+test('retries map users only by sub and never downgrade an existing clinician', async () => {
+  await withTestDb(async (pool) => {
+    const now = new Date('2030-06-01T09:00:00Z');
+    await seedDemo(pool, [{ sub: 'actual-cognito-sub', displayName: 'First', role: 'clinician' }], now);
+    await seedDemo(pool, [{ sub: 'actual-cognito-sub', displayName: 'Changed', role: 'patient' }], now);
+    await expect(pool.query('SELECT cognito_sub, display_name, role FROM users'))
+      .resolves.toMatchObject({ rows: [{ cognito_sub: 'actual-cognito-sub', display_name: 'Changed', role: 'clinician' }], rowCount: 1 });
+    await expect(pool.query('SELECT * FROM clinician_profiles')).resolves.toMatchObject({ rowCount: 1 });
+    await expect(pool.query('SELECT * FROM availability_slots')).resolves.toMatchObject({ rowCount: 2 });
+  });
+});
+
 test('upserts demo users and creates stable future slots from the supplied clock', async () => {
   await withTestDb(async (pool) => {
     const now = new Date('2030-06-01T09:00:00.000Z');

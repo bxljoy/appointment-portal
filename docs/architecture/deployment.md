@@ -211,7 +211,8 @@ metrics use the documented `AWS/RDS` namespace and `ProxyName` dimension.
 
 Exact stack output names are `FrontendUrl`, `ApiUrl`, `DistributionId`,
 `WebBucketName`, `UserPoolId`, `ClientId`, `Issuer`, `CognitoDomain`, `ProxyName`,
-and `DatabaseId`. `MigrationFunctionName` is added with its real resource in Task 14.
+`DatabaseId`, and `MigrationFunctionName`. The migration output references the private
+setup Lambda described in [the provisioning runbook](../runbook/provisioning.md).
 `FrontendUrl` and `CognitoDomain` are HTTPS origins with no trailing slash;
 `ApiUrl` is the direct API Gateway base endpoint, while browser config uses `/api`.
 
