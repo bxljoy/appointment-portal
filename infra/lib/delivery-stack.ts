@@ -48,8 +48,12 @@ export class DeliveryStack extends Stack {
       resources: ['deploy', 'file-publishing', 'image-publishing', 'lookup'].map(bootstrapRole),
     }));
     this.role.addToPolicy(new iam.PolicyStatement({
-      actions: ['cloudformation:DescribeStacks', 'cloudformation:DescribeStackEvents', 'cloudformation:ListStackResources', 'cloudformation:DeleteStack'],
-      resources: [`arn:${this.partition}:cloudformation:${region}:${account}:stack/AppointmentPortal/*`],
+      actions: ['cloudformation:DescribeStacks', 'cloudformation:DescribeStackEvents', 'cloudformation:ListStackResources'],
+      resources: ['AppointmentPortal', 'AppointmentPortalToolkit', 'AppointmentPortalDelivery']
+        .map((name) => `arn:${this.partition}:cloudformation:${region}:${account}:stack/${name}/*`),
+    }));
+    this.role.addToPolicy(new iam.PolicyStatement({
+      actions: ['cloudformation:DeleteStack'], resources: [`arn:${this.partition}:cloudformation:${region}:${account}:stack/AppointmentPortal/*`],
     }));
     this.role.addToPolicy(new iam.PolicyStatement({
       actions: ['lambda:InvokeFunction'], resources: [`arn:${this.partition}:lambda:${region}:${account}:function:AppointmentPortal-*`],
@@ -60,11 +64,13 @@ export class DeliveryStack extends Stack {
       conditions: { StringEquals: { 'aws:ResourceTag/Project': config.projectTag } },
     }));
     this.role.addToPolicy(new iam.PolicyStatement({
-      actions: ['s3:ListBucket', 's3:ListBucketVersions', 's3:GetBucketLocation'], resources: [`arn:${this.partition}:s3:::appointmentportal-*`, `arn:${this.partition}:s3:::cdk-${config.qualifier}-assets-${account}-${region}`],
+      actions: ['s3:ListBucket', 's3:ListBucketVersions', 's3:GetBucketLocation', 's3:GetBucketTagging'], resources: [`arn:${this.partition}:s3:::appointmentportal-*`, `arn:${this.partition}:s3:::cdk-${config.qualifier}-assets-${account}-${region}`],
     }));
     this.role.addToPolicy(new iam.PolicyStatement({
-      actions: ['s3:GetObject', 's3:PutObject'], resources: [`arn:${this.partition}:s3:::appointmentportal-*/*`],
+      actions: ['s3:GetObject', 's3:PutObject', 's3:DeleteObject', 's3:DeleteObjectVersion'], resources: [`arn:${this.partition}:s3:::appointmentportal-*/*`],
     }));
+    this.role.addToPolicy(new iam.PolicyStatement({ actions: ['s3:DeleteBucket'], resources: [`arn:${this.partition}:s3:::appointmentportal-*`] }));
+    this.role.addToPolicy(new iam.PolicyStatement({ actions: ['s3:ListAllMyBuckets'], resources: ['*'] }));
     this.role.addToPolicy(new iam.PolicyStatement({
       actions: ['cloudfront:CreateInvalidation', 'cloudfront:GetInvalidation'], resources: [`arn:${this.partition}:cloudfront::${account}:distribution/*`],
     }));
@@ -72,7 +78,38 @@ export class DeliveryStack extends Stack {
       actions: ['rds:DescribeDBEngineVersions', 'rds:DescribeOrderableDBInstanceOptions', 'rds:DescribeDBProxies', 'rds:DescribeDBProxyTargets',
         'rds:DescribeDBInstances', 'rds:DescribeDBSnapshots', 'rds:DescribeDBInstanceAutomatedBackups', 'lambda:GetAccountSettings',
         'ec2:DescribeNetworkInterfaces', 'ec2:DescribeVpcEndpoints', 'secretsmanager:ListSecrets', 'logs:DescribeLogGroups',
-        'ecr:DescribeRepositories', 'ssm:GetParameter', 'iam:ListOpenIDConnectProviders', 'iam:GetOpenIDConnectProvider'], resources: ['*'],
+        'ecr:DescribeRepositories', 'ssm:DescribeParameters', 'iam:ListOpenIDConnectProviders'], resources: ['*'],
+    }));
+    this.role.addToPolicy(new iam.PolicyStatement({
+      actions: ['logs:ListTagsForResource'], resources: [`arn:${this.partition}:logs:${region}:${account}:log-group:/appointment-portal/*`],
+    }));
+    this.role.addToPolicy(new iam.PolicyStatement({
+      actions: ['ecr:ListTagsForResource'], resources: [`arn:${this.partition}:ecr:${region}:${account}:repository/cdk-${config.qualifier}-container-assets-${account}-${region}`],
+    }));
+    this.role.addToPolicy(new iam.PolicyStatement({
+      actions: ['ssm:ListTagsForResource'], resources: [`arn:${this.partition}:ssm:${region}:${account}:parameter/cdk-bootstrap/${config.qualifier}/*`],
+    }));
+    this.role.addToPolicy(new iam.PolicyStatement({
+      actions: ['iam:GetOpenIDConnectProvider'], resources: [`arn:${this.partition}:iam::${account}:oidc-provider/token.actions.githubusercontent.com`],
+    }));
+    const projectTagCondition = { StringEquals: { 'aws:ResourceTag/Project': config.projectTag } };
+    this.role.addToPolicy(new iam.PolicyStatement({
+      actions: ['rds:ListTagsForResource', 'rds:DeleteDBInstance', 'rds:DeleteDBProxy', 'rds:DeleteDBSnapshot', 'rds:DeleteDBInstanceAutomatedBackup'],
+      resources: [`arn:${this.partition}:rds:${region}:${account}:db:*`, `arn:${this.partition}:rds:${region}:${account}:db-proxy:*`,
+        `arn:${this.partition}:rds:${region}:${account}:snapshot:*`, `arn:${this.partition}:rds:${region}:${account}:auto-backup:*`],
+      conditions: projectTagCondition,
+    }));
+    this.role.addToPolicy(new iam.PolicyStatement({
+      actions: ['secretsmanager:DeleteSecret'], resources: [`arn:${this.partition}:secretsmanager:${region}:${account}:secret:*`],
+      conditions: projectTagCondition,
+    }));
+    this.role.addToPolicy(new iam.PolicyStatement({
+      actions: ['logs:DeleteLogGroup'], resources: [`arn:${this.partition}:logs:${region}:${account}:log-group:/appointment-portal/*`],
+      conditions: projectTagCondition,
+    }));
+    this.role.addToPolicy(new iam.PolicyStatement({
+      actions: ['ec2:DeleteVpcEndpoints'], resources: [`arn:${this.partition}:ec2:${region}:${account}:vpc-endpoint/*`],
+      conditions: projectTagCondition,
     }));
     this.role.addToPolicy(new iam.PolicyStatement({
       actions: ['iam:PassRole'], resources: [bootstrapRole('*')],

@@ -1,4 +1,4 @@
-import { CfnOutput, DefaultStackSynthesizer, RemovalPolicies, Stack, Tags, type StackProps } from 'aws-cdk-lib';
+import { CfnOutput, CfnParameter, DefaultStackSynthesizer, RemovalPolicies, Stack, Tags, Validations, type StackProps } from 'aws-cdk-lib';
 import type { Construct } from 'constructs';
 import { parsePortalConfig, type PortalConfig } from './config.js';
 import { DataConstruct } from './data-construct.js';
@@ -7,7 +7,7 @@ import { ApiConstruct } from './api-construct.js';
 import { WebConstruct } from './web-construct.js';
 import { OperationsConstruct } from './operations-construct.js';
 
-export type PortalStackProps = StackProps & { config: PortalConfig };
+export type PortalStackProps = StackProps & { config: PortalConfig; sourceCommit?: string };
 
 export class PortalStack extends Stack {
   readonly data: DataConstruct;
@@ -26,6 +26,10 @@ export class PortalStack extends Stack {
       synthesizer: new DefaultStackSynthesizer({ qualifier: config.qualifier }),
     });
     Tags.of(this).add('Project', 'appointment-portal');
+    new CfnParameter(this, 'DeploymentPhase', { type: 'String', allowedValues: ['bootstrap', 'ready'], default: config.phase });
+    Validations.of(this).acknowledge({ id: 'CloudFormation-Validate::W2001',
+      reason: 'Lifecycle reconciliation reads this stack parameter through DescribeStacks; template resources intentionally do not reference it.' });
+    if (props.sourceCommit) Tags.of(this).add('SourceCommit', zCommit(props.sourceCommit));
     this.data = new DataConstruct(this, 'Data', { config });
     this.identity = new IdentityConstruct(this, 'Identity', { config });
     this.api = new ApiConstruct(this, 'Api', { data: this.data, identity: this.identity });
@@ -48,3 +52,8 @@ export class PortalStack extends Stack {
     RemovalPolicies.of(this).destroy();
   }
 }
+
+const zCommit = (value: string) => {
+  if (!/^[a-f0-9]{40}$/.test(value)) throw new Error('Source commit must be a full lowercase Git SHA.');
+  return value;
+};

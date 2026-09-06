@@ -12,6 +12,13 @@ only controlled lowercase addresses, display names, and roles. Generated passwor
 remain in `.runtime/credentials/`; never place them in arguments, logs, artifacts,
 workflow outputs, or commits.
 
+Use exactly four aliases in `accounts.json`: `patient-a`, `patient-b`,
+`clinician-a`, and `clinician-b`. Each alias has a distinct controlled email. The
+deployed browser process receives four deterministic private file paths through
+`PORTAL_E2E_PATIENT_A_FILE`, `PORTAL_E2E_PATIENT_B_FILE`,
+`PORTAL_E2E_CLINICIAN_A_FILE`, and `PORTAL_E2E_CLINICIAN_B_FILE`; passwords do not
+enter process arguments or environment variables.
+
 `demo-config.json` contains deployment coordinates and file paths:
 
 ```json
@@ -23,6 +30,7 @@ workflow outputs, or commits.
   "maxCostUsd": 5,
   "repository": "OWNER/REPOSITORY",
   "branch": "main",
+  "sourceCommit": "0123456789abcdef0123456789abcdef01234567",
   "accountsFile": "/absolute/path/.runtime/accounts.json",
   "priceReport": "/absolute/path/.runtime/prices.json"
 }
@@ -32,7 +40,8 @@ workflow outputs, or commits.
 URLs, duration assumptions, and these numeric rate fields: `databaseHourly`,
 `proxyVcpuHourly`, `databaseVcpus`, `interfaceEndpointAzHourly`, `azCount`, `cognito`, `logging`,
 `storage`, and `transfer`. Obtain quotes for the selected account and Region on the
-deployment day. Reports older than seven days are rejected. The cap is an execution
+deployment day. Reports older than seven days or more than five minutes in the future
+are rejected. The cap is an execution
 guard; AWS does not enforce it as a budget.
 
 Pricing behavior was checked on 2026-09-06 against the official
@@ -54,7 +63,8 @@ pnpm demo:preflight
 ```
 
 This read-only check compares STS identity with the configured account; checks the
-PostgreSQL 17 patch, `db.t4g.small`, and RDS Proxy API in the Region; requires Lambda
+PostgreSQL 17 patch and `db.t4g.small`, and confirms that the caller can reach the
+RDS Proxy API in the selected Region; requires Lambda
 headroom for 16 reserved executions while leaving 100 unreserved; reads Node,
 pnpm, and Docker versions; requires a clean worktree; and checks the estimate.
 The quota calculation follows AWS's requirement to retain 100 unreserved executions;
@@ -102,6 +112,15 @@ auth. Function errors, unhealthy targets, callback mismatch, unsafe publication,
 test failure stop the run. Hashed assets upload first with immutable metadata;
 validated public config and shell use `no-cache`; old hashes remain through
 verification.
+
+The live application stack carries project and source commit tags plus a deployment
+phase parameter. A missing local manifest is restored from a matching live stack before any
+function is invoked. A saved ready manifest whose stack is absent, or a live stack
+from another commit, stops before migration. After a deployment mutation the runner
+writes a minimal private recovery manifest before parsing CDK outputs, then enriches
+it atomically after inventory succeeds. Failed runs capture sanitized CloudFormation
+events in `.runtime/diagnostics.json`, scan that file for credential material, and
+upload it with the recovery inventory.
 
 The workflow uses concurrency group `appointment-portal-demo` with cancellation
 disabled. A lost runner cannot guarantee an `always()` cleanup step. Restore the

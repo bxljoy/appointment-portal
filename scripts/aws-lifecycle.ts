@@ -1,31 +1,33 @@
 import { createHash } from 'node:crypto';
-import { readdir, readFile, writeFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import { extname, join, resolve } from 'node:path';
 import { CloudFormationClient, DeleteStackCommand, DescribeStacksCommand, ListStackResourcesCommand, waitUntilStackDeleteComplete } from '@aws-sdk/client-cloudformation';
 import { CloudFrontClient, CreateInvalidationCommand, waitUntilInvalidationCompleted } from '@aws-sdk/client-cloudfront';
 import { DeleteVpcEndpointsCommand, DescribeNetworkInterfacesCommand, DescribeVpcEndpointsCommand, EC2Client, type DescribeNetworkInterfacesCommandOutput } from '@aws-sdk/client-ec2';
-import { DeleteRepositoryCommand, DescribeRepositoriesCommand, ECRClient } from '@aws-sdk/client-ecr';
+import { DeleteRepositoryCommand, DescribeRepositoriesCommand, ECRClient, ListTagsForResourceCommand as EcrListTagsForResourceCommand } from '@aws-sdk/client-ecr';
 import { DeleteOpenIDConnectProviderCommand, GetOpenIDConnectProviderCommand, IAMClient, ListOpenIDConnectProvidersCommand } from '@aws-sdk/client-iam';
 import { GetAccountSettingsCommand, LambdaClient } from '@aws-sdk/client-lambda';
-import { DeleteParameterCommand, GetParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
-import { DeleteDBInstanceAutomatedBackupCommand, DeleteDBSnapshotCommand, DescribeDBEngineVersionsCommand, DescribeDBInstanceAutomatedBackupsCommand, DescribeDBInstancesCommand, DescribeDBProxiesCommand, DescribeDBProxyTargetsCommand, DescribeDBSnapshotsCommand, DescribeOrderableDBInstanceOptionsCommand, RDSClient, type DescribeDBInstanceAutomatedBackupsCommandOutput, type DescribeDBInstancesCommandOutput, type DescribeDBProxiesCommandOutput } from '@aws-sdk/client-rds';
-import { DeleteBucketCommand, DeleteObjectsCommand, HeadBucketCommand, HeadObjectCommand, ListObjectVersionsCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { DeleteParameterCommand, DescribeParametersCommand, ListTagsForResourceCommand as SsmListTagsForResourceCommand, SSMClient } from '@aws-sdk/client-ssm';
+import { DeleteDBInstanceAutomatedBackupCommand, DeleteDBInstanceCommand, DeleteDBProxyCommand, DeleteDBSnapshotCommand, DescribeDBEngineVersionsCommand, DescribeDBInstanceAutomatedBackupsCommand, DescribeDBInstancesCommand, DescribeDBProxiesCommand, DescribeDBProxyTargetsCommand, DescribeDBSnapshotsCommand, DescribeOrderableDBInstanceOptionsCommand, ListTagsForResourceCommand as RdsListTagsForResourceCommand, RDSClient, type DescribeDBInstanceAutomatedBackupsCommandOutput, type DescribeDBInstancesCommandOutput, type DescribeDBProxiesCommandOutput } from '@aws-sdk/client-rds';
+import { ChecksumMode, DeleteBucketCommand, DeleteObjectsCommand, GetBucketTaggingCommand, HeadBucketCommand, HeadObjectCommand, ListBucketsCommand, ListObjectVersionsCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { DeleteSecretCommand, ListSecretsCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import { GetCallerIdentityCommand, STSClient } from '@aws-sdk/client-sts';
-import { DeleteLogGroupCommand, DescribeLogGroupsCommand, CloudWatchLogsClient } from '@aws-sdk/client-cloudwatch-logs';
+import { DeleteLogGroupCommand, DescribeLogGroupsCommand, ListTagsForResourceCommand as LogsListTagsForResourceCommand, CloudWatchLogsClient } from '@aws-sdk/client-cloudwatch-logs';
 import { CognitoIdentityProviderClient, DescribeUserPoolClientCommand } from '@aws-sdk/client-cognito-identity-provider';
 import { z } from 'zod';
 import { invokeMigration } from './invoke-migration.js';
 import { provisionUsers, RuntimeCredentialStore, type ControlledAccount } from './provision.js';
 import { runPreflight, runProcess, type PreflightProbe, type ProcessRunner } from './preflight.js';
 import { publishFrontend, type PublishFile } from './publish.js';
-import { APP_STACK, DELIVERY_STACK, PROJECT_TAG, QUALIFIER, TOOLKIT_STACK, deduplicateResources, type DeploymentManifest, type InventoryAdapter, type InventoryPage, type ResourceRecord } from './lifecycle-types.js';
-import type { DemoConfig, DemoDependencies } from './deploy.js';
+import { APP_STACK, DELIVERY_STACK, PROJECT_TAG, QUALIFIER, TOOLKIT_STACK, deduplicateResources, saveDeploymentManifest, type DeploymentManifest, type InventoryAdapter, type InventoryPage, type ResourceRecord } from './lifecycle-types.js';
+import type { DemoConfig, DemoDependencies, StackInspection } from './deploy.js';
+import { writePrivateJson } from './private-file.js';
 
 const configSchema = z.strictObject({
   account: z.string().regex(/^\d{12}$/), region: z.string().regex(/^[a-z]{2}(?:-[a-z]+)+-[1-9]\d*$/),
   postgresVersion: z.string().regex(/^17\.[1-9]\d*$/), durationHours: z.number().positive().max(24), maxCostUsd: z.number().positive(),
   repository: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/), branch: z.string().regex(/^[A-Za-z0-9._/-]+$/),
+  sourceCommit: z.string().regex(/^[a-f0-9]{40}$/),
   accountsFile: z.string().min(1), priceReport: z.string().min(1),
   oidcProviderArn: z.string().startsWith('arn:aws:iam::').optional(),
 });
@@ -40,6 +42,11 @@ const priceSchema = z.strictObject({
     cognito: z.number().nonnegative(), logging: z.number().nonnegative(), storage: z.number().nonnegative(), transfer: z.number().nonnegative(),
   }),
 });
+const accountAlias = z.enum(['patient-a', 'patient-b', 'clinician-a', 'clinician-b']);
+const controlledAccountsSchema = z.array(z.strictObject({
+  alias: accountAlias, email: z.email(), displayName: z.string().min(1).max(100), role: z.enum(['patient', 'clinician']),
+})).length(4).refine((accounts) => new Set(accounts.map((account) => account.alias)).size === 4)
+  .refine((accounts) => accounts.every((account) => account.role === (account.alias.startsWith('patient') ? 'patient' : 'clinician')));
 
 export type AwsClients = {
   cloudformation: CloudFormationClient; cloudfront: CloudFrontClient; ec2: EC2Client; ecr: ECRClient; iam: IAMClient;
@@ -62,7 +69,7 @@ export const makeAwsPreflightProbe = (input: AwsDemoInput, clients: AwsClients =
     const engine = await clients.rds.send(new DescribeDBEngineVersionsCommand({ Engine: 'postgres', EngineVersion: postgresVersion }));
     const options = await clients.rds.send(new DescribeOrderableDBInstanceOptionsCommand({ Engine: 'postgres', EngineVersion: postgresVersion, DBInstanceClass: 'db.t4g.small', Vpc: true }));
     await clients.rds.send(new DescribeDBProxiesCommand({ MaxRecords: 20 }));
-    return { postgres: Boolean(engine.DBEngineVersions?.length), instanceClass: Boolean(options.OrderableDBInstanceOptions?.length), proxy: true };
+    return { postgres: Boolean(engine.DBEngineVersions?.length), instanceClass: Boolean(options.OrderableDBInstanceOptions?.length), proxyApiReachable: true };
   },
   async unreservedConcurrency() {
     return z.number().int().nonnegative().parse((await clients.lambda.send(new GetAccountSettingsCommand({}))).AccountLimit?.UnreservedConcurrentExecutions);
@@ -77,18 +84,21 @@ export const makeAwsPreflightProbe = (input: AwsDemoInput, clients: AwsClients =
   async costRates() {
     const report = priceSchema.parse(JSON.parse(await readFile(input.priceReport, 'utf8')));
     if (report.region !== input.region) throw new Error('Price report region does not match the deployment.');
-    if (Date.now() - new Date(report.checkedAt).getTime() > 7 * 86_400_000) throw new Error('Price report is older than seven days.');
+    const age = Date.now() - new Date(report.checkedAt).getTime();
+    if (age < -5 * 60_000) throw new Error('Price report timestamp is meaningfully in the future.');
+    if (age > 7 * 86_400_000) throw new Error('Price report is older than seven days.');
     return report.rates;
   },
 });
 
 const contextArgs = (input: AwsDemoInput, phase: 'bootstrap' | 'ready', frontendUrl?: string) => [
   '-c', `account=${input.account}`, '-c', `region=${input.region}`, '-c', `postgresVersion=${input.postgresVersion}`,
-  '-c', `phase=${phase}`, '-c', `qualifier=${QUALIFIER}`, ...(frontendUrl ? ['-c', `frontendUrl=${frontendUrl}`] : []),
+  '-c', `phase=${phase}`, '-c', `qualifier=${QUALIFIER}`, ...(input.sourceCommit ? ['-c', `sourceCommit=${input.sourceCommit}`] : []),
+  ...(frontendUrl ? ['-c', `frontendUrl=${frontendUrl}`] : []),
 ];
 
 export const makeAwsDemoDependencies = (input: AwsDemoInput, clients = clientsFor(input.region), runner: ProcessRunner = runProcess): DemoDependencies => {
-  const config: DemoConfig = { ...input, qualifier: QUALIFIER, toolkitStack: TOOLKIT_STACK, appStack: APP_STACK, projectTag: PROJECT_TAG };
+  const config: DemoConfig = { ...input, qualifier: QUALIFIER, toolkitStack: TOOLKIT_STACK, appStack: APP_STACK, deliveryStack: DELIVERY_STACK, projectTag: PROJECT_TAG };
   const credentials = new RuntimeCredentialStore(resolve('.runtime/credentials'));
   let activeManifest: DeploymentManifest | undefined;
   return {
@@ -111,24 +121,17 @@ export const makeAwsDemoDependencies = (input: AwsDemoInput, clients = clientsFo
         await runner('pnpm', ['--filter', '@portal/infra', 'exec', 'cdk', 'deploy', APP_STACK, '--exclusively', '--require-approval', 'never',
           '--outputs-file', outputPath, ...contextArgs(input, phase, frontendUrl)]);
       } catch (error) {
-        const partial = await maybeListStackResources(clients.cloudformation, APP_STACK, 'Application::');
-        if (partial.length > 0) {
-          const toolkit = await listStackResources(clients.cloudformation, TOOLKIT_STACK, 'Bootstrap::');
-          const delivery = await maybeListStackResources(clients.cloudformation, DELIVERY_STACK, 'Delivery::');
-          const recoverable: DeploymentManifest = {
-            account: input.account, region: input.region, projectTag: PROJECT_TAG, appStack: APP_STACK,
-            deliveryStack: DELIVERY_STACK, toolkitStack: TOOLKIT_STACK, qualifier: QUALIFIER,
-            phase: activeManifest?.phase === 'ready' ? 'ready' : 'bootstrap', outputs: activeManifest?.outputs ?? {},
-            resources: deduplicateResources([...partial, ...toolkit, ...delivery]),
-          };
-          activeManifest = recoverable;
-          await (await import('./lifecycle-types.js')).saveDeploymentManifest(recoverable);
-        }
+        const live = await inspectStackOwnership(clients.cloudformation, APP_STACK);
+        if (live.exists && live.owned) await persistRecovery(live.phase ?? phase, live.outputs ?? activeManifest?.outputs ?? {}, []);
         throw error;
       }
+      const live = await inspectStackOwnership(clients.cloudformation, APP_STACK);
+      if (!live.exists || !live.owned) throw new Error('Deployed application stack does not have established ownership.');
+      await persistRecovery(live.phase ?? phase, live.outputs ?? {}, []);
       const outputsFile = z.record(z.string(), z.record(z.string(), z.string())).parse(JSON.parse(await readFile(outputPath, 'utf8')));
       const outputs = outputsFile[APP_STACK];
       if (!outputs) throw new Error('CDK outputs did not contain the application stack.');
+      await persistRecovery(phase, outputs, []);
       const application = await listStackResources(clients.cloudformation, APP_STACK, 'Application::');
       const toolkit = await listStackResources(clients.cloudformation, TOOLKIT_STACK, 'Bootstrap::');
       const delivery = await maybeListStackResources(clients.cloudformation, DELIVERY_STACK, 'Delivery::');
@@ -136,13 +139,14 @@ export const makeAwsDemoDependencies = (input: AwsDemoInput, clients = clientsFo
         account: input.account, region: input.region, projectTag: PROJECT_TAG, appStack: APP_STACK,
         deliveryStack: DELIVERY_STACK, toolkitStack: TOOLKIT_STACK, qualifier: QUALIFIER, phase, outputs,
         resources: deduplicateResources([...application, ...toolkit, ...delivery]),
+        ...(input.sourceCommit ? { sourceCommit: input.sourceCommit } : {}),
       };
       return activeManifest;
     },
     migrate: async () => { await invokeMigration(requiredManifestOutput(activeManifest, 'MigrationFunctionName'), { action: 'migrate' }, clients.lambda); },
     provision: async () => {
-      const accounts = z.array(z.strictObject({ email: z.email(), displayName: z.string().min(1).max(100), role: z.enum(['patient', 'clinician']) })).parse(JSON.parse(await readFile(input.accountsFile, 'utf8'))) as ControlledAccount[];
-      const users = await provisionUsers(requiredManifestOutput(activeManifest, 'UserPoolId'), accounts, { cognito: clients.cognito, credentials });
+      const accounts = controlledAccountsSchema.parse(JSON.parse(await readFile(input.accountsFile, 'utf8')));
+      const users = await provisionUsers(requiredManifestOutput(activeManifest, 'UserPoolId'), accounts.map(({ email, displayName, role }) => ({ email, displayName, role })) as ControlledAccount[], { cognito: clients.cognito, credentials });
       await invokeMigration(requiredManifestOutput(activeManifest, 'MigrationFunctionName'), { action: 'seed', users, now: new Date().toISOString() }, clients.lambda);
     },
     waitForProxy: async () => waitForProxy(clients.rds, requiredManifestOutput(activeManifest, 'ProxyName')),
@@ -150,15 +154,35 @@ export const makeAwsDemoDependencies = (input: AwsDemoInput, clients = clientsFo
     publish: async (manifest) => publishBuiltFrontend(manifest, clients),
     verify: async (manifest) => {
       const frontendUrl = requiredManifestOutput(manifest, 'FrontendUrl');
-      await runner('pnpm', ['exec', 'playwright', 'test', '--project=aws'], { env: { ...process.env, PORTAL_E2E_AWS: '1', PORTAL_E2E_AWS_URL: frontendUrl } });
+      const accounts = controlledAccountsSchema.parse(JSON.parse(await readFile(input.accountsFile, 'utf8')));
+      const fileEnvironment = Object.fromEntries(accounts.map((account) => [
+        `PORTAL_E2E_${account.alias.replace('-', '_').toUpperCase()}_FILE`, credentials.filePath(requiredManifestOutput(manifest, 'UserPoolId'), account.email),
+      ]));
+      await runner('pnpm', ['exec', 'playwright', 'test', '--project=aws'], { env: {
+        ...process.env, ...fileEnvironment, PORTAL_E2E_AWS: '1', PORTAL_E2E_AWS_URL: frontendUrl,
+      } });
     },
   };
+
+  async function persistRecovery(phase: 'bootstrap' | 'ready', outputs: Record<string, string>, resources: ResourceRecord[]) {
+    activeManifest = {
+      account: input.account, region: input.region, projectTag: PROJECT_TAG, appStack: APP_STACK, deliveryStack: DELIVERY_STACK,
+      toolkitStack: TOOLKIT_STACK, qualifier: QUALIFIER, phase, outputs, resources,
+      ...(input.sourceCommit ? { sourceCommit: input.sourceCommit } : {}),
+    };
+    await saveDeploymentManifest(activeManifest);
+  }
 };
 
-const inspectStackOwnership = async (client: CloudFormationClient, name: string) => {
+const inspectStackOwnership = async (client: CloudFormationClient, name: string): Promise<StackInspection> => {
   try {
     const stack = (await client.send(new DescribeStacksCommand({ StackName: name }))).Stacks?.[0];
-    return { exists: Boolean(stack), owned: stack?.Tags?.some((tag) => tag.Key === 'Project' && tag.Value === PROJECT_TAG) ?? false };
+    const tag = (key: string) => stack?.Tags?.find((item) => item.Key === key)?.Value;
+    const phase = tag('DeploymentPhase') ?? stack?.Parameters?.find((parameter) => parameter.ParameterKey === 'DeploymentPhase')?.ParameterValue;
+    const outputs = Object.fromEntries((stack?.Outputs ?? []).flatMap((output) => output.OutputKey && output.OutputValue ? [[output.OutputKey, output.OutputValue]] : []));
+    return { exists: Boolean(stack), owned: tag('Project') === PROJECT_TAG,
+      ...(phase === 'bootstrap' || phase === 'ready' ? { phase } : {}), ...(Object.keys(outputs).length ? { outputs } : {}),
+      ...(tag('SourceCommit') ? { sourceCommit: tag('SourceCommit') } : {}) };
   } catch (error) {
     if (isValidationError(error)) return { exists: false, owned: false };
     throw error;
@@ -217,7 +241,7 @@ const publishBuiltFrontend = async (manifest: DeploymentManifest, clients: AwsCl
       const checksum = createHash('sha256').update(entry.body).digest('base64');
       if (entry.cacheControl.includes('immutable')) {
         try {
-          const prior = await clients.s3.send(new HeadObjectCommand({ Bucket: bucket, Key: entry.key }));
+          const prior = await clients.s3.send(new HeadObjectCommand({ Bucket: bucket, Key: entry.key, ChecksumMode: ChecksumMode.ENABLED }));
           if (prior.ChecksumSHA256 !== checksum) throw new Error(`Refusing to overwrite immutable asset ${entry.key}.`);
           return;
         } catch (error) { if (!isNotFound(error)) throw error; }
@@ -245,11 +269,14 @@ const readFrontendFiles = async (root: string, directory = root): Promise<Publis
 const contentType = (path: string) => ({ '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml' }[extname(path)] ?? 'application/octet-stream');
 const isValidationError = (error: unknown) => typeof error === 'object' && error !== null && 'name' in error && error.name === 'ValidationError';
 const isNotFound = (error: unknown) => typeof error === 'object' && error !== null && ('$metadata' in error && (error.$metadata as { httpStatusCode?: number }).httpStatusCode === 404 || 'name' in error && error.name === 'NotFound');
-const isParameterMissing = (error: unknown) => typeof error === 'object' && error !== null && 'name' in error && error.name === 'ParameterNotFound';
+const isNoSuchTagSet = (error: unknown) => typeof error === 'object' && error !== null && 'name' in error && error.name === 'NoSuchTagSet';
 
 export class AwsInventoryAdapter implements InventoryAdapter {
   private resources?: ResourceRecord[];
-  constructor(readonly manifest: DeploymentManifest, readonly clients: AwsClients = clientsFor(manifest.region), readonly options: { forceDeleteSecrets?: boolean; archivePath?: string } = {}) {}
+  private readonly verifiedOwned = new Set<string>();
+  constructor(readonly manifest: DeploymentManifest, readonly clients: AwsClients = clientsFor(manifest.region), readonly options: { forceDeleteSecrets?: boolean; archivePath?: string; sleep?: (milliseconds: number) => Promise<void> } = {}) {
+    for (const resource of manifest.resources) if (resource.owned) this.verifiedOwned.add(this.resourceKey(resource));
+  }
 
   async account() { return z.string().regex(/^\d{12}$/).parse((await this.clients.sts.send(new GetCallerIdentityCommand({}))).Account); }
   async page(cursor?: string): Promise<InventoryPage> {
@@ -258,7 +285,8 @@ export class AwsInventoryAdapter implements InventoryAdapter {
     const items = this.resources.slice(start, start + 100);
     return { items, ...(start + 100 < this.resources.length ? { nextCursor: String(start + 100) } : {}) };
   }
-  async archive(manifest: DeploymentManifest) { await writeFile(this.options.archivePath ?? resolve('.runtime/pre-destroy-inventory.json'), `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 }); }
+  async archive(manifest: DeploymentManifest) { await writePrivateJson(this.options.archivePath ?? resolve('.runtime/pre-destroy-inventory.json'), manifest); }
+  async persist(manifest: DeploymentManifest) { await saveDeploymentManifest(manifest); }
   async deleteStack(name: string) {
     const stack = await inspectStackOwnership(this.clients.cloudformation, name);
     if (!stack.exists) return;
@@ -268,13 +296,25 @@ export class AwsInventoryAdapter implements InventoryAdapter {
   async waitStackDeleted(name: string) { const result = await waitUntilStackDeleteComplete({ client: this.clients.cloudformation, maxWaitTime: 1800 }, { StackName: name }); if (result.state !== 'SUCCESS') throw new Error(`Stack ${name} deletion did not complete.`); this.resources = undefined; }
   async deleteResource(resource: ResourceRecord) {
     const type = resource.type.replace(/^(?:Application|Bootstrap|Delivery)::/, '');
+    if (!resource.owned) throw new Error(`Refusing to delete unowned resource ${type}:${resource.id}.`);
+    if (!this.verifiedOwned.has(this.resourceKey(resource))) throw new Error(`Refusing to delete ${type}:${resource.id} without verified ownership.`);
     if (type === 'AWS::RDS::DBSnapshot') await this.clients.rds.send(new DeleteDBSnapshotCommand({ DBSnapshotIdentifier: resource.id }));
     else if (type === 'AWS::RDS::DBInstanceAutomatedBackup') await this.clients.rds.send(new DeleteDBInstanceAutomatedBackupCommand({ DbiResourceId: resource.id }));
+    else if (type === 'AWS::RDS::DBInstance') {
+      await this.clients.rds.send(new DeleteDBInstanceCommand({ DBInstanceIdentifier: resource.id, SkipFinalSnapshot: true, DeleteAutomatedBackups: true }));
+      await this.waitUntilMissing(async () => (await this.clients.rds.send(new DescribeDBInstancesCommand({ DBInstanceIdentifier: resource.id }))).DBInstances?.length === 0);
+    } else if (type === 'AWS::RDS::DBProxy') {
+      await this.clients.rds.send(new DeleteDBProxyCommand({ DBProxyName: resource.id }));
+      await this.waitUntilMissing(async () => (await this.clients.rds.send(new DescribeDBProxiesCommand({ DBProxyName: resource.id }))).DBProxies?.length === 0);
+    }
     else if (type === 'AWS::SecretsManager::Secret') {
       if (!this.options.forceDeleteSecrets) throw new Error(`Secret ${resource.id} requires explicit immediate-cleanup mode.`);
       await this.clients.secrets.send(new DeleteSecretCommand({ SecretId: resource.arn ?? resource.id, ForceDeleteWithoutRecovery: true }));
     } else if (type === 'AWS::Logs::LogGroup') await this.clients.logs.send(new DeleteLogGroupCommand({ logGroupName: resource.id }));
-    else if (type === 'AWS::EC2::VPCEndpoint') await this.clients.ec2.send(new DeleteVpcEndpointsCommand({ VpcEndpointIds: [resource.id] }));
+    else if (type === 'AWS::EC2::VPCEndpoint') {
+      const result = await this.clients.ec2.send(new DeleteVpcEndpointsCommand({ VpcEndpointIds: [resource.id] }));
+      if (result.Unsuccessful?.length) throw new Error(`Delete failed for VPC endpoint ${resource.id}.`);
+    }
     else if (type === 'AWS::ECR::Repository') await this.clients.ecr.send(new DeleteRepositoryCommand({ repositoryName: resource.id, force: true }));
     else if (type === 'AWS::SSM::Parameter') await this.clients.ssm.send(new DeleteParameterCommand({ Name: resource.id }));
     else if (type === 'AWS::IAM::OIDCProvider') {
@@ -282,69 +322,148 @@ export class AwsInventoryAdapter implements InventoryAdapter {
       await this.clients.iam.send(new DeleteOpenIDConnectProviderCommand({ OpenIDConnectProviderArn: resource.arn }));
     } else if (type === 'AWS::S3::ObjectVersion' || type === 'AWS::S3::DeleteMarker') {
       const parsed = z.strictObject({ bucket: z.string(), key: z.string(), versionId: z.string() }).parse(JSON.parse(resource.id));
-      await this.clients.s3.send(new DeleteObjectsCommand({ Bucket: parsed.bucket, Delete: { Objects: [{ Key: parsed.key, VersionId: parsed.versionId }], Quiet: true } }));
+      const result = await this.clients.s3.send(new DeleteObjectsCommand({ Bucket: parsed.bucket, Delete: { Objects: [{ Key: parsed.key, VersionId: parsed.versionId }], Quiet: true } }));
+      if (result.Errors?.length) throw new Error(`Delete failed for S3 version in ${parsed.bucket}.`);
     } else if (type === 'AWS::S3::Bucket') await this.clients.s3.send(new DeleteBucketCommand({ Bucket: resource.id }));
     else throw new Error(`No safe explicit cleanup operation exists for ${resource.type}:${resource.id}.`);
+    this.resources = undefined;
+  }
+
+  canDeleteResource(resource: ResourceRecord) {
+    return new Set(['AWS::RDS::DBSnapshot', 'AWS::RDS::DBInstanceAutomatedBackup', 'AWS::RDS::DBInstance', 'AWS::RDS::DBProxy',
+      'AWS::SecretsManager::Secret', 'AWS::Logs::LogGroup', 'AWS::EC2::VPCEndpoint', 'AWS::ECR::Repository', 'AWS::SSM::Parameter',
+      'AWS::IAM::OIDCProvider', 'AWS::S3::ObjectVersion', 'AWS::S3::DeleteMarker', 'AWS::S3::Bucket'])
+      .has(resource.type.replace(/^(?:Application|Bootstrap|Delivery)::/, ''));
+  }
+
+  private async waitUntilMissing(check: () => Promise<boolean>) {
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      try { if (await check()) return; }
+      catch (error) { if (isNotFound(error)) return; throw error; }
+      await (this.options.sleep ?? ((milliseconds) => new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds))))(5_000);
+    }
+    throw new Error('Owned resource did not reach a deleted state.');
+  }
+
+  private resourceKey(resource: Pick<ResourceRecord, 'type' | 'id' | 'arn'>) {
+    return `${resource.type.replace(/^(?:Application|Bootstrap|Delivery)::/, '')}\0${resource.arn ?? resource.id}`;
   }
 
   private async inventory(): Promise<ResourceRecord[]> {
-    const known = new Map(this.manifest.resources.map((item) => [`${item.type.replace(/^(?:Application|Bootstrap|Delivery)::/, '')}\0${item.id}`, item]));
-    const ownedId = (type: string, id: string) => known.has(`${type}\0${id}`) || this.manifest.resources.some((item) => item.id === id && item.owned);
+    const normalizedType = (type: string) => type.replace(/^(?:Application|Bootstrap|Delivery)::/, '');
+    const identityKeys = (type: string, id: string, arn?: string) => [id, ...(arn ? [arn] : [])].map((value) => `${normalizedType(type)}\0${value}`);
+    const knownOwned = new Set(this.manifest.resources.filter((item) => item.owned).flatMap((item) => identityKeys(item.type, item.id, item.arn)));
+    const knownShared = new Set(this.manifest.resources.filter((item) => !item.owned).flatMap((item) => identityKeys(item.type, item.id, item.arn)));
+    const hasProjectTag = (tags?: readonly { Key?: string; Value?: string }[]) => tags?.some((tag) => tag.Key === 'Project' && tag.Value === PROJECT_TAG) ?? false;
+    const ownership = (type: string, id: string, arn?: string, tags?: readonly { Key?: string; Value?: string }[]) => {
+      const keys = identityKeys(type, id, arn);
+      if (keys.some((key) => knownShared.has(key))) return false;
+      return keys.some((key) => knownOwned.has(key)) || hasProjectTag(tags);
+    };
+    const explicitlyShared = (type: string, id: string, arn?: string) => identityKeys(type, id, arn).some((key) => knownShared.has(key));
+    const discovered = (type: string, id: string, arn: string | undefined, tags: readonly { Key?: string; Value?: string }[] | undefined,
+      outputMatch = false): ResourceRecord | undefined => {
+      const owned = ownership(type, id, arn, tags);
+      if (owned) return { type: `Application::${type}`, id, arn, owned: true };
+      if (outputMatch) return { type: `Application::${type}`, id, arn, owned: false, state: 'unverified' };
+      if (explicitlyShared(type, id, arn)) return { type, id, arn, owned: false };
+      return undefined;
+    };
     const resources: ResourceRecord[] = [];
     const stackNames: string[] = [this.manifest.appStack, ...(this.manifest.deliveryStack ? [this.manifest.deliveryStack] : []), this.manifest.toolkitStack];
     for (const name of stackNames) {
       const prefix = name === this.manifest.appStack ? 'Application::' : name === this.manifest.deliveryStack ? 'Delivery::' : 'Bootstrap::';
-      resources.push(...await maybeListStackResources(this.clients.cloudformation, name, prefix));
+      const stack = await inspectStackOwnership(this.clients.cloudformation, name);
+      if (stack.exists && !stack.owned) { resources.push({ type: `${prefix}AWS::CloudFormation::Stack`, id: name, owned: false }); continue; }
+      if (stack.owned) {
+        const members = await listStackResources(this.clients.cloudformation, name, prefix);
+        resources.push(...members);
+        for (const member of members) for (const key of identityKeys(member.type, member.id, member.arn)) knownOwned.add(key);
+      }
     }
     let Marker: string | undefined;
     do {
       const page = await this.clients.rds.send(new DescribeDBSnapshotsCommand({ Marker }));
-      for (const snapshot of page.DBSnapshots ?? []) if (snapshot.DBSnapshotIdentifier &&
-        (ownedId('AWS::RDS::DBSnapshot', snapshot.DBSnapshotIdentifier) || snapshot.DBInstanceIdentifier === this.manifest.outputs.DatabaseId)) resources.push({
-        type: 'Application::AWS::RDS::DBSnapshot', id: snapshot.DBSnapshotIdentifier, arn: snapshot.DBSnapshotArn, owned: true });
+      for (const snapshot of page.DBSnapshots ?? []) if (snapshot.DBSnapshotIdentifier) {
+        const record = discovered('AWS::RDS::DBSnapshot', snapshot.DBSnapshotIdentifier, snapshot.DBSnapshotArn, snapshot.TagList,
+          snapshot.DBInstanceIdentifier === this.manifest.outputs.DatabaseId);
+        if (record) resources.push(record);
+      }
       Marker = page.Marker;
     } while (Marker);
     Marker = undefined;
     do {
       const page: DescribeDBInstancesCommandOutput = await this.clients.rds.send(new DescribeDBInstancesCommand({ Marker }));
-      for (const database of page.DBInstances ?? []) if (database.DBInstanceIdentifier === this.manifest.outputs.DatabaseId) resources.push({
-        type: 'AWS::RDS::DBInstance', id: database.DBInstanceIdentifier, arn: database.DBInstanceArn, owned: true,
-      });
+      for (const database of page.DBInstances ?? []) if (database.DBInstanceIdentifier) {
+        const record = discovered('AWS::RDS::DBInstance', database.DBInstanceIdentifier, database.DBInstanceArn, database.TagList,
+          database.DBInstanceIdentifier === this.manifest.outputs.DatabaseId);
+        if (record) resources.push(record);
+      }
       Marker = page.Marker;
     } while (Marker);
     Marker = undefined;
     do {
       const page: DescribeDBProxiesCommandOutput = await this.clients.rds.send(new DescribeDBProxiesCommand({ Marker }));
-      for (const proxy of page.DBProxies ?? []) if (proxy.DBProxyName === this.manifest.outputs.ProxyName) resources.push({
-        type: 'AWS::RDS::DBProxy', id: proxy.DBProxyName, arn: proxy.DBProxyArn, owned: true,
-      });
+      for (const proxy of page.DBProxies ?? []) if (proxy.DBProxyName) {
+        if (!proxy.DBProxyName.startsWith('appointment-portal-') && proxy.DBProxyName !== this.manifest.outputs.ProxyName &&
+          !explicitlyShared('AWS::RDS::DBProxy', proxy.DBProxyName, proxy.DBProxyArn)) continue;
+        const tags = proxy.DBProxyArn ? (await this.clients.rds.send(new RdsListTagsForResourceCommand({ ResourceName: proxy.DBProxyArn }))).TagList : undefined;
+        const record = discovered('AWS::RDS::DBProxy', proxy.DBProxyName, proxy.DBProxyArn, tags,
+          proxy.DBProxyName === this.manifest.outputs.ProxyName);
+        if (record) resources.push(record);
+      }
       Marker = page.Marker;
     } while (Marker);
     Marker = undefined;
     do {
       const page: DescribeDBInstanceAutomatedBackupsCommandOutput = await this.clients.rds.send(new DescribeDBInstanceAutomatedBackupsCommand({ Marker }));
-      for (const backup of page.DBInstanceAutomatedBackups ?? []) if (backup.DBInstanceIdentifier === this.manifest.outputs.DatabaseId && backup.DbiResourceId) resources.push({
-        type: 'AWS::RDS::DBInstanceAutomatedBackup', id: backup.DbiResourceId, arn: backup.DBInstanceAutomatedBackupsArn, owned: true,
-      });
+      for (const backup of page.DBInstanceAutomatedBackups ?? []) if (backup.DbiResourceId) {
+        if (!backup.DBInstanceIdentifier?.startsWith('appointmentportal-') && backup.DBInstanceIdentifier !== this.manifest.outputs.DatabaseId &&
+          !explicitlyShared('AWS::RDS::DBInstanceAutomatedBackup', backup.DbiResourceId, backup.DBInstanceAutomatedBackupsArn)) continue;
+        const tags = backup.DBInstanceAutomatedBackupsArn ? (await this.clients.rds.send(new RdsListTagsForResourceCommand({ ResourceName: backup.DBInstanceAutomatedBackupsArn }))).TagList : undefined;
+        const record = discovered('AWS::RDS::DBInstanceAutomatedBackup', backup.DbiResourceId, backup.DBInstanceAutomatedBackupsArn, tags,
+          backup.DBInstanceIdentifier === this.manifest.outputs.DatabaseId);
+        if (record) resources.push(record);
+      }
       Marker = page.Marker;
     } while (Marker);
     let secretToken: string | undefined;
     do {
       const page = await this.clients.secrets.send(new ListSecretsCommand({ NextToken: secretToken, IncludePlannedDeletion: true }));
-      for (const secret of page.SecretList ?? []) if (secret.Name && secret.ARN && (ownedId('AWS::SecretsManager::Secret', secret.Name) ||
-        ownedId('AWS::SecretsManager::Secret', secret.ARN) || secret.ARN === this.manifest.outputs.AdminSecretArn || secret.ARN === this.manifest.outputs.ApplicationSecretArn)) resources.push({
-        type: 'AWS::SecretsManager::Secret', id: secret.Name, arn: secret.ARN, owned: true, ...(secret.DeletedDate ? { state: 'scheduled' as const } : {}),
-      });
+      for (const secret of page.SecretList ?? []) if (secret.Name && secret.ARN) {
+        const record = discovered('AWS::SecretsManager::Secret', secret.Name, secret.ARN, secret.Tags,
+          secret.ARN === this.manifest.outputs.AdminSecretArn || secret.ARN === this.manifest.outputs.ApplicationSecretArn);
+        if (record) resources.push({ ...record, ...(secret.DeletedDate && record.owned ? { state: 'scheduled' as const } : {}) });
+      }
       secretToken = page.NextToken;
     } while (secretToken);
     let logToken: string | undefined;
     do {
       const page = await this.clients.logs.send(new DescribeLogGroupsCommand({ logGroupNamePrefix: '/appointment-portal/', nextToken: logToken }));
-      for (const group of page.logGroups ?? []) if (group.logGroupName && ownedId('AWS::Logs::LogGroup', group.logGroupName)) resources.push({ type: 'AWS::Logs::LogGroup', id: group.logGroupName, arn: group.arn, owned: true });
+      for (const group of page.logGroups ?? []) if (group.logGroupName && group.arn) {
+        const tagResponse = await this.clients.logs.send(new LogsListTagsForResourceCommand({ resourceArn: group.arn }));
+        const tags = Object.entries(tagResponse.tags ?? {}).map(([Key, Value]) => ({ Key, Value }));
+        const record = discovered('AWS::Logs::LogGroup', group.logGroupName, group.arn, tags);
+        if (record) resources.push(record);
+      }
       logToken = page.nextToken;
     } while (logToken);
-    const knownBuckets = new Map(this.manifest.resources.filter((item) => item.type.endsWith('AWS::S3::Bucket') && item.owned).map((item) => [item.id, item.type.startsWith('Bootstrap::') ? 'Bootstrap::' : item.type.startsWith('Delivery::') ? 'Delivery::' : 'Application::']));
-    if (this.manifest.outputs.WebBucketName) knownBuckets.set(this.manifest.outputs.WebBucketName, 'Application::');
+    let bucketToken: string | undefined;
+    do {
+      const page = await this.clients.s3.send(new ListBucketsCommand({ ContinuationToken: bucketToken, BucketRegion: this.manifest.region }));
+      for (const bucket of page.Buckets ?? []) if (bucket.Name) {
+        if (!bucket.Name.startsWith('appointmentportal-') && bucket.Name !== `cdk-${this.manifest.qualifier}-assets-${this.manifest.account}-${this.manifest.region}`) continue;
+        let tags: { Key?: string; Value?: string }[] | undefined;
+        try { tags = (await this.clients.s3.send(new GetBucketTaggingCommand({ Bucket: bucket.Name }))).TagSet; }
+        catch (error) { if (!isNoSuchTagSet(error) && !isNotFound(error)) throw error; }
+        const record = discovered('AWS::S3::Bucket', bucket.Name, undefined, tags);
+        if (record) resources.push({ ...record,
+          type: bucket.Name.startsWith(`cdk-${this.manifest.qualifier}-`) ? 'Bootstrap::AWS::S3::Bucket' : record.type });
+      }
+      bucketToken = page.ContinuationToken;
+    } while (bucketToken);
+    const knownBuckets = new Map([...this.manifest.resources, ...resources].filter((item) => item.type.endsWith('AWS::S3::Bucket') && item.owned)
+      .map((item) => [item.id, item.type.startsWith('Bootstrap::') ? 'Bootstrap::' : item.type.startsWith('Delivery::') ? 'Delivery::' : 'Application::']));
     for (const [bucket, prefix] of knownBuckets) {
       try { await this.clients.s3.send(new HeadBucketCommand({ Bucket: bucket })); }
       catch (error) { if (isNotFound(error)) continue; throw error; }
@@ -360,40 +479,55 @@ export class AwsInventoryAdapter implements InventoryAdapter {
     let ec2Token: string | undefined;
     do {
       const page = await this.clients.ec2.send(new DescribeVpcEndpointsCommand({ NextToken: ec2Token, Filters: [{ Name: 'tag:Project', Values: [PROJECT_TAG] }] }));
-      for (const endpoint of page.VpcEndpoints ?? []) if (endpoint.VpcEndpointId &&
-        (ownedId('AWS::EC2::VPCEndpoint', endpoint.VpcEndpointId) || endpoint.VpcId === this.manifest.outputs.VpcId)) resources.push({ type: 'Application::AWS::EC2::VPCEndpoint', id: endpoint.VpcEndpointId, owned: true });
+      for (const endpoint of page.VpcEndpoints ?? []) if (endpoint.VpcEndpointId) {
+        const record = discovered('AWS::EC2::VPCEndpoint', endpoint.VpcEndpointId, undefined, endpoint.Tags,
+          endpoint.VpcId === this.manifest.outputs.VpcId);
+        if (record) resources.push(record);
+      }
       ec2Token = page.NextToken;
     } while (ec2Token);
     ec2Token = undefined;
     do {
       const page: DescribeNetworkInterfacesCommandOutput = await this.clients.ec2.send(new DescribeNetworkInterfacesCommand({ NextToken: ec2Token, Filters: [{ Name: 'vpc-id', Values: [this.manifest.outputs.VpcId ?? 'vpc-none'] }] }));
-      for (const networkInterface of page.NetworkInterfaces ?? []) if (networkInterface.NetworkInterfaceId) resources.push({
-        type: 'Application::AWS::EC2::NetworkInterface', id: networkInterface.NetworkInterfaceId, owned: true,
-      });
+      for (const networkInterface of page.NetworkInterfaces ?? []) if (networkInterface.NetworkInterfaceId) {
+        const owned = ownership('AWS::EC2::NetworkInterface', networkInterface.NetworkInterfaceId, undefined, networkInterface.TagSet);
+        resources.push({ type: 'Application::AWS::EC2::NetworkInterface', id: networkInterface.NetworkInterfaceId, owned,
+          ...(!owned ? { state: 'unverified' as const } : {}) });
+      }
       ec2Token = page.NextToken;
     } while (ec2Token);
     let ecrToken: string | undefined;
-    const knownRepositories = new Set(this.manifest.resources.filter((item) => item.type.endsWith('AWS::ECR::Repository') && item.owned).map((item) => item.id));
+    const knownRepositories = new Set([...this.manifest.resources, ...resources].filter((item) => item.type.endsWith('AWS::ECR::Repository') && item.owned).map((item) => item.id));
     do {
       const page = await this.clients.ecr.send(new DescribeRepositoriesCommand({ nextToken: ecrToken }));
-      for (const repository of page.repositories ?? []) if (repository.repositoryName && knownRepositories.has(repository.repositoryName)) resources.push({
-        type: 'Bootstrap::AWS::ECR::Repository', id: repository.repositoryName, arn: repository.repositoryArn, owned: true,
-      });
+      for (const repository of page.repositories ?? []) if (repository.repositoryName && repository.repositoryArn) {
+        if (repository.repositoryName !== `cdk-${this.manifest.qualifier}-container-assets-${this.manifest.account}-${this.manifest.region}`) continue;
+        const tags = (await this.clients.ecr.send(new EcrListTagsForResourceCommand({ resourceArn: repository.repositoryArn }))).tags;
+        const owned = knownRepositories.has(repository.repositoryName) || ownership('AWS::ECR::Repository', repository.repositoryName, repository.repositoryArn, tags);
+        if (owned) resources.push({ type: 'Bootstrap::AWS::ECR::Repository', id: repository.repositoryName, arn: repository.repositoryArn, owned: true });
+      }
       ecrToken = page.nextToken;
     } while (ecrToken);
-    const bootstrapParameter = `/cdk-bootstrap/${this.manifest.qualifier}/version`;
-    try {
-      const parameter = (await this.clients.ssm.send(new GetParameterCommand({ Name: bootstrapParameter }))).Parameter;
-      if (parameter?.Name && ownedId('AWS::SSM::Parameter', parameter.Name)) resources.push({ type: 'Bootstrap::AWS::SSM::Parameter', id: parameter.Name, arn: parameter.ARN, owned: true });
-    } catch (error) { if (!isParameterMissing(error)) throw error; }
+    let parameterToken: string | undefined;
+    do {
+      const page = await this.clients.ssm.send(new DescribeParametersCommand({ NextToken: parameterToken }));
+      for (const parameter of page.Parameters ?? []) if (parameter.Name) {
+        if (!parameter.Name.startsWith(`/cdk-bootstrap/${this.manifest.qualifier}/`)) continue;
+        const tagResponse = await this.clients.ssm.send(new SsmListTagsForResourceCommand({ ResourceType: 'Parameter', ResourceId: parameter.Name }));
+        if (ownership('AWS::SSM::Parameter', parameter.Name, undefined, tagResponse.TagList)) resources.push({ type: 'Bootstrap::AWS::SSM::Parameter', id: parameter.Name, owned: true });
+      }
+      parameterToken = page.NextToken;
+    } while (parameterToken);
     for (const provider of (await this.clients.iam.send(new ListOpenIDConnectProvidersCommand({}))).OpenIDConnectProviderList ?? []) {
       if (!provider.Arn) continue;
       const details = await this.clients.iam.send(new GetOpenIDConnectProviderCommand({ OpenIDConnectProviderArn: provider.Arn }));
-      if (details.Url === 'token.actions.githubusercontent.com') resources.push({
-        type: this.manifest.resources.some((item) => item.owned && item.id === provider.Arn) ? 'Delivery::AWS::IAM::OIDCProvider' : 'AWS::IAM::OIDCProvider', id: details.Url, arn: provider.Arn,
-        owned: this.manifest.resources.some((item) => item.owned && item.id === provider.Arn),
-      });
+      if (details.Url === 'token.actions.githubusercontent.com') {
+        const owned = ownership('AWS::IAM::OIDCProvider', details.Url, provider.Arn);
+        resources.push({ type: owned ? 'Delivery::AWS::IAM::OIDCProvider' : 'AWS::IAM::OIDCProvider', id: details.Url, arn: provider.Arn, owned });
+      }
     }
-    return deduplicateResources(resources);
+    const result = deduplicateResources(resources);
+    for (const resource of result) if (resource.owned) this.verifiedOwned.add(this.resourceKey(resource));
+    return result;
   }
 }

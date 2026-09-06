@@ -18,8 +18,10 @@ jobs:
       POSTGRES_VERSION: ${{ vars.POSTGRES_VERSION }}
       MAX_COST_USD: ${{ vars.MAX_COST_USD }}
       DEMO_DURATION_HOURS: ${{ vars.DEMO_DURATION_HOURS }}
-      DEMO_PATIENT_EMAIL: ${{ secrets.DEMO_PATIENT_EMAIL }}
-      DEMO_CLINICIAN_EMAIL: ${{ secrets.DEMO_CLINICIAN_EMAIL }}
+      DEMO_PATIENT_A_EMAIL: ${{ secrets.DEMO_PATIENT_A_EMAIL }}
+      DEMO_PATIENT_B_EMAIL: ${{ secrets.DEMO_PATIENT_B_EMAIL }}
+      DEMO_CLINICIAN_A_EMAIL: ${{ secrets.DEMO_CLINICIAN_A_EMAIL }}
+      DEMO_CLINICIAN_B_EMAIL: ${{ secrets.DEMO_CLINICIAN_B_EMAIL }}
       PRICE_REPORT_JSON: ${{ vars.PRICE_REPORT_JSON }}
     steps:
       - name: Restrict the demo environment to its selected branch
@@ -64,7 +66,9 @@ jobs:
           pnpm demo:deploy
       - name: Capture sanitized failure diagnostics
         if: failure()
-        run: pnpm check:artifacts
+        run: |
+          pnpm demo:diagnostics
+          pnpm check:artifacts -- .runtime/diagnostics.json
       - name: Attempt application cleanup after failure
         if: failure()
         continue-on-error: true
@@ -77,6 +81,7 @@ jobs:
           path: |
             .runtime/deployment.json
             .runtime/pre-destroy-inventory.json
+            .runtime/diagnostics.json
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7

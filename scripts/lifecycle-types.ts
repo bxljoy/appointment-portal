@@ -1,7 +1,8 @@
 import { constants } from 'node:fs';
-import { chmod, lstat, mkdir, open, rename, rm } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { open } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import { z } from 'zod';
+import { writePrivateJson } from './private-file.js';
 
 export const PROJECT_TAG = 'appointment-portal';
 export const APP_STACK = 'AppointmentPortal';
@@ -15,7 +16,7 @@ const resourceSchema = z.strictObject({
   id: z.string().min(1).max(2048),
   arn: z.string().min(1).max(2048).optional(),
   owned: z.boolean(),
-  state: z.enum(['active', 'scheduled']).optional(),
+  state: z.enum(['active', 'scheduled', 'unverified']).optional(),
 });
 const publicOutputNames = new Set([
   'FrontendUrl', 'ApiUrl', 'DistributionId', 'WebBucketName', 'UserPoolId', 'ClientId', 'Issuer',
@@ -37,6 +38,7 @@ const manifestSchema = z.strictObject({
   deliveryStack: z.literal(DELIVERY_STACK).optional(),
   toolkitStack: z.literal(TOOLKIT_STACK),
   qualifier: z.literal(QUALIFIER),
+  sourceCommit: z.string().regex(/^[a-f0-9]{40}$/).optional(),
   phase: z.enum(['bootstrap', 'ready']),
   outputs: outputsSchema,
   resources: z.array(resourceSchema).max(10_000),
@@ -51,6 +53,8 @@ export type InventoryAdapter = {
   waitStackDeleted(name: string): Promise<void>;
   deleteResource(resource: ResourceRecord): Promise<void>;
   archive(manifest: DeploymentManifest): Promise<void>;
+  persist(manifest: DeploymentManifest): Promise<void>;
+  canDeleteResource?(resource: ResourceRecord): boolean;
 };
 
 export const parseDeploymentManifest = (input: unknown): DeploymentManifest => manifestSchema.parse(input);
@@ -71,18 +75,7 @@ export const loadDeploymentManifest = async (path = DEPLOYMENT_PATH): Promise<De
 
 export const saveDeploymentManifest = async (input: DeploymentManifest, path = DEPLOYMENT_PATH): Promise<void> => {
   const manifest = parseDeploymentManifest(input);
-  const directory = dirname(path);
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  const dirInfo = await lstat(directory);
-  if (!dirInfo.isDirectory() || dirInfo.isSymbolicLink() || dirInfo.uid !== process.getuid?.()) throw new Error('Unsafe runtime directory.');
-  await chmod(directory, 0o700);
-  const temporary = `${path}.${process.pid}.tmp`;
-  const handle = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
-  try {
-    try { await handle.writeFile(`${JSON.stringify(manifest, null, 2)}\n`); await handle.sync(); }
-    finally { await handle.close(); }
-    await rename(temporary, path);
-  } finally { await rm(temporary, { force: true }); }
+  await writePrivateJson(path, manifest);
 };
 
 export const collectInventory = async (inventory: Pick<InventoryAdapter, 'page'>): Promise<ResourceRecord[]> => {

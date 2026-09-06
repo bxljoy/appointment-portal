@@ -25,6 +25,11 @@ describe('production and sensitive-runtime artifact inspection', () => {
     await writeFile(join(root, 'apps/web/dist/config.json'), JSON.stringify({ mode: 'cognito', access_token: 'fixture-only-token' }));
     await expect(checkArtifacts(root, [])).rejects.toThrow(/Unsafe artifacts/);
   }));
+  it('scans an explicitly named private diagnostics artifact without logging its contents', () => fixture(async (root) => {
+    await mkdir(join(root, '.runtime'));
+    await writeFile(join(root, '.runtime/diagnostics.json'), JSON.stringify({ request: { access_token: 'must-stay-private' } }));
+    await expect(checkArtifacts(root, [], ['.runtime/diagnostics.json'])).rejects.toThrow(/Unsafe artifacts/);
+  }));
   it.each(['.runtime/account.json', '.auth/state.json', 'test-results/a/trace.zip', 'playwright-report/index.html', 'traces/auth.zip', 'storage-state/state.json', '.env.production', 'private.key', 'reports/index.html', 'reports/login/error-context.md', 'error-context/login.md', 'tests/e2e/error-context.md', 'tests/e2e/storage/account.json', 'tests/e2e/playwright-results/login.json', 'tests/e2e/playwright-reports/login.html', 'blob-report/results.zip', 'docs/.runtime/notes.md'])('rejects sensitive tracked runtime path %s', (path) => fixture(async (root) => {
     await expect(checkArtifacts(root, [path])).rejects.toThrow(/Unsafe artifacts/);
   }));

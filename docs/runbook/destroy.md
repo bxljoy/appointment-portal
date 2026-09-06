@@ -12,14 +12,19 @@ pnpm demo:destroy -- --force-disposable-secrets
 pnpm demo:verify-cleanup
 ```
 
-Cleanup verifies the account, archives live inventory, deletes
+Cleanup verifies the STS account before inventory, archives live inventory, writes
+the refreshed combined inventory back to `.runtime/deployment.json`, deletes
 `AppointmentPortal`, waits for CloudFormation, then refreshes service-specific
 paginated inventories. It checks databases, proxies, snapshots and automated
-backups; S3 versions and delete markers; recorded secrets; log groups; network
-interfaces and endpoints; and toolkit assets. Immediate force deletion applies only
+backups; tagged S3 buckets, versions and delete markers; tagged secrets and log
+groups; network interfaces and endpoints; and tagged toolkit ECR/SSM assets. Immediate force deletion applies only
 to recorded disposable secrets. Secret values are never read or logged.
 
-Verification exits nonzero for active owned leftovers. Secrets with a deletion date
+Verification exits nonzero for active owned leftovers and unverified blockers.
+Outputs identify candidates but do not authorize deletion without exact stack
+membership or the live project tag. Interface ENIs remain report-only: cleanup
+deletes their owning proxy or VPC endpoint and verifies that the ENI disappears.
+Secrets with a deletion date
 are reported under `scheduled`, separate from physical removal. An imported GitHub
 OIDC provider appears under `shared` and is never deleted.
 
@@ -32,10 +37,13 @@ pnpm demo:destroy -- --all --force-disposable-secrets
 pnpm demo:verify-cleanup -- --all
 ```
 
-The `--all` path removes the delivery stack, toolkit stack, then recorded retained
+The `--all` path uses authenticated local access to remove the delivery stack,
+toolkit stack, then recorded retained
 assets. Preserve a provider or toolkit used by another project. If deletion fails,
-inspect CloudFormation events and the exact residual instead of repeatedly deleting
-or broadening selection. Secrets deletion is asynchronous; see the official
+cleanup inventories exact supported project-owned blockers, removes dependent
+resources such as an RDS proxy before its database, retries stack deletion once,
+and verifies again. It never directly deletes service-owned interface ENIs or a
+shared GitHub provider. Secrets deletion is asynchronous; see the official
 [DeleteSecret API](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_DeleteSecret.html)
 (checked 2026-09-06).
 

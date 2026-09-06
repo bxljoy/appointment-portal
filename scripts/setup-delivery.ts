@@ -1,4 +1,4 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DescribeStacksCommand, CloudFormationClient } from '@aws-sdk/client-cloudformation';
@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { listStackResources, makeAwsPreflightProbe, readAwsDemoInput } from './aws-lifecycle.js';
 import { runPreflight, runProcess } from './preflight.js';
 import { APP_STACK, DELIVERY_STACK, PROJECT_TAG, QUALIFIER, TOOLKIT_STACK, deduplicateResources, loadDeploymentManifest, saveDeploymentManifest } from './lifecycle-types.js';
+import { writePrivateJson } from './private-file.js';
 
 export const setupDelivery = async (configPath: string): Promise<{ roleArn: string; oidcProviderArn?: string }> => {
   const config = await readAwsDemoInput(configPath);
@@ -29,11 +30,12 @@ export const setupDelivery = async (configPath: string): Promise<{ roleArn: stri
     '--outputs-file', resolve('.runtime/delivery-outputs.json'),
     '-c', `account=${config.account}`, '-c', `region=${config.region}`, '-c', `postgresVersion=${config.postgresVersion}`,
     '-c', 'phase=bootstrap', '-c', `qualifier=${QUALIFIER}`, '-c', `repository=${config.repository}`, '-c', `branch=${config.branch}`,
+    '-c', `sourceCommit=${config.sourceCommit}`,
     ...(oidcProviderArn ? ['-c', `oidcProviderArn=${oidcProviderArn}`] : [])]);
   const outputs = z.record(z.string(), z.record(z.string(), z.string())).parse(JSON.parse(await readFile(resolve('.runtime/delivery-outputs.json'), 'utf8')));
   const roleArn = z.string().startsWith('arn:aws:iam::').parse(outputs[DELIVERY_STACK]?.DeliveryRoleArn);
   const result = { roleArn, ...(oidcProviderArn ? { oidcProviderArn } : {}) };
-  await writeFile(resolve('.runtime/delivery.json'), `${JSON.stringify(result, null, 2)}\n`, { mode: 0o600 });
+  await writePrivateJson(resolve('.runtime/delivery.json'), result);
   const prior = await loadDeploymentManifest();
   const resources = deduplicateResources([
     ...(prior?.resources ?? []),
@@ -41,10 +43,10 @@ export const setupDelivery = async (configPath: string): Promise<{ roleArn: stri
     ...await listStackResources(cloudformation, DELIVERY_STACK, 'Delivery::'),
     ...(oidcProviderArn ? [{ type: 'AWS::IAM::OIDCProvider', id: 'token.actions.githubusercontent.com', arn: oidcProviderArn, owned: false }] : []),
   ]);
-  await saveDeploymentManifest(prior ? { ...prior, deliveryStack: DELIVERY_STACK, resources } : {
+  await saveDeploymentManifest(prior ? { ...prior, deliveryStack: DELIVERY_STACK, sourceCommit: config.sourceCommit, resources } : {
     account: config.account, region: config.region, projectTag: PROJECT_TAG, appStack: APP_STACK,
     deliveryStack: DELIVERY_STACK, toolkitStack: TOOLKIT_STACK, qualifier: QUALIFIER,
-    phase: 'bootstrap', outputs: {}, resources,
+    sourceCommit: config.sourceCommit, phase: 'bootstrap', outputs: {}, resources,
   });
   return result;
 };

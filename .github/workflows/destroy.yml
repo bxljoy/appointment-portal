@@ -21,6 +21,9 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
+      - name: Restrict the demo environment to its selected branch
+        if: github.ref_name != vars.DEMO_BRANCH
+        run: exit 1
       - name: Validate workflow run id
         env:
           DEMO_RUN_ID: ${{ inputs.demo_run_id }}

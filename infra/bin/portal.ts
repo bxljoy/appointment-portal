@@ -13,8 +13,10 @@ const config = parsePortalConfig({
   qualifier: app.node.tryGetContext('qualifier'),
   frontendUrl: app.node.tryGetContext('frontendUrl'),
 });
+const sourceCommit = app.node.tryGetContext('sourceCommit') as unknown;
+if (sourceCommit !== undefined && (typeof sourceCommit !== 'string' || !/^[a-f0-9]{40}$/.test(sourceCommit))) throw new Error('Invalid source commit context.');
 new PortalStack(app, 'AppointmentPortal', {
-  env: { account: config.account, region: config.region }, config,
+  env: { account: config.account, region: config.region }, config, ...(sourceCommit ? { sourceCommit } : {}),
 });
 const repository = app.node.tryGetContext('repository') as unknown;
 if (repository !== undefined) {

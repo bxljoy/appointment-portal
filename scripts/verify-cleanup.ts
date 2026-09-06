@@ -4,13 +4,14 @@ import { collectInventory, loadDeploymentManifest, type DeploymentManifest, type
 
 export type CleanupVerification = { remaining: ResourceRecord[]; scheduled: ResourceRecord[]; shared: ResourceRecord[] };
 
-export const verifyCleanup = async (manifest: DeploymentManifest, inventory: Pick<InventoryAdapter, 'page'>, options: { includeInfrastructure?: boolean } = {}): Promise<CleanupVerification> => {
+export const verifyCleanup = async (manifest: DeploymentManifest, inventory: Pick<InventoryAdapter, 'account' | 'page'>, options: { includeInfrastructure?: boolean } = {}): Promise<CleanupVerification> => {
+  if (await inventory.account() !== manifest.account) throw new Error(`AWS account mismatch: expected ${manifest.account}.`);
   const resources = await collectInventory(inventory);
   const relevant = options.includeInfrastructure ? resources : resources.filter((resource) => !/^(?:Bootstrap|Delivery)::/.test(resource.type));
   return {
-    remaining: relevant.filter((resource) => resource.owned && resource.state !== 'scheduled'),
+    remaining: relevant.filter((resource) => resource.state === 'unverified' || resource.owned && resource.state !== 'scheduled'),
     scheduled: relevant.filter((resource) => resource.owned && resource.state === 'scheduled'),
-    shared: resources.filter((resource) => !resource.owned),
+    shared: resources.filter((resource) => !resource.owned && resource.state !== 'unverified'),
   };
 };
 

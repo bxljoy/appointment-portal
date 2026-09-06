@@ -5,11 +5,13 @@ import { loadDeploymentManifest, saveDeploymentManifest, type DeploymentManifest
 export { publishFrontend } from './publish.js';
 
 export type DemoConfig = {
-  account: string; region: string; postgresVersion: string; qualifier: string;
-  toolkitStack: string; appStack: string; projectTag: string;
+  account: string; region: string; postgresVersion: string; qualifier: 'apptdemo';
+  toolkitStack: 'AppointmentPortalToolkit'; appStack: 'AppointmentPortal'; projectTag: 'appointment-portal';
+  deliveryStack?: 'AppointmentPortalDelivery';
   durationHours: number; maxCostUsd: number;
+  sourceCommit?: string;
 };
-export type StackInspection = { exists: boolean; owned: boolean };
+export type StackInspection = { exists: boolean; owned: boolean; phase?: 'bootstrap' | 'ready'; outputs?: Record<string, string>; sourceCommit?: string };
 export type DemoDependencies = {
   config: DemoConfig;
   loadManifest(): Promise<DeploymentManifest | undefined>;
@@ -33,8 +35,25 @@ export const runDemo = async (deps: DemoDependencies): Promise<DeploymentManifes
   if (application.exists && !application.owned) {
     throw new Error('Refusing to adopt an existing application stack without established ownership.');
   }
-  const saved = await deps.loadManifest();
+  let saved = await deps.loadManifest();
   assertSavedTarget(saved, deps.config);
+  if (application.exists && deps.config.sourceCommit && application.sourceCommit !== deps.config.sourceCommit) {
+    throw new Error('Live application stack source commit does not match this checkout.');
+  }
+  if (saved?.phase === 'ready' && !application.exists) throw new Error('Saved ready deployment is missing from the live account.');
+  if (application.exists && saved?.phase === 'ready' && application.phase !== 'ready') throw new Error('Live stack phase conflicts with the saved ready manifest.');
+  if (application.exists && (!saved || application.phase === 'ready' && saved.phase !== 'ready')) {
+    if (!application.phase || !application.outputs) throw new Error('Live application stack lacks recoverable phase or outputs.');
+    const recovered: DeploymentManifest = {
+      account: deps.config.account, region: deps.config.region, projectTag: deps.config.projectTag,
+      appStack: deps.config.appStack, toolkitStack: deps.config.toolkitStack, qualifier: deps.config.qualifier,
+      ...(deps.config.deliveryStack ? { deliveryStack: deps.config.deliveryStack } : {}),
+      phase: application.phase, outputs: application.outputs, resources: [],
+      ...(deps.config.sourceCommit ? { sourceCommit: deps.config.sourceCommit } : {}),
+    };
+    await deps.saveManifest(recovered);
+    saved = recovered;
+  }
   let bootstrapManifest: DeploymentManifest;
   if (saved?.phase === 'ready') {
     bootstrapManifest = saved;
@@ -68,7 +87,8 @@ export const runDemo = async (deps: DemoDependencies): Promise<DeploymentManifes
 const assertSavedTarget = (manifest: DeploymentManifest | undefined, config: DemoConfig): void => {
   if (!manifest) return;
   if (manifest.account !== config.account || manifest.region !== config.region || manifest.qualifier !== config.qualifier ||
-    manifest.appStack !== config.appStack || manifest.toolkitStack !== config.toolkitStack || manifest.projectTag !== config.projectTag) {
+    manifest.appStack !== config.appStack || manifest.toolkitStack !== config.toolkitStack || manifest.projectTag !== config.projectTag ||
+    config.sourceCommit !== undefined && manifest.sourceCommit !== config.sourceCommit) {
     throw new Error('Saved deployment manifest does not match the requested target.');
   }
 };

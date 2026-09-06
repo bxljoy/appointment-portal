@@ -27,6 +27,8 @@ describe('manual disposable environment workflows', () => {
     expect(text).toContain('.runtime/deployment.json');
     expect(text).not.toContain('.runtime/credentials');
     expect(text).not.toMatch(/AWS_(?:ACCESS_KEY_ID|SECRET_ACCESS_KEY|SESSION_TOKEN)/);
+    expect(text).toContain('pnpm demo:diagnostics');
+    expect(text).toContain('.runtime/diagnostics.json');
   });
 
   it('installs the AWS verification browser before deployment', async () => {
@@ -36,8 +38,10 @@ describe('manual disposable environment workflows', () => {
   });
 
   it('restores an explicit manifest and dry-runs before deleting', async () => {
-    const text = JSON.stringify(await workflow('destroy'));
+    const value = await workflow('destroy');
+    const text = JSON.stringify(value);
     expect(text.indexOf('pnpm demo:destroy -- --dry-run')).toBeLessThan(text.indexOf('pnpm demo:destroy -- --force-disposable-secrets'));
     expect(text).toContain('pnpm demo:verify-cleanup');
+    expect(text.indexOf('github.ref_name != vars.DEMO_BRANCH')).toBeLessThan(text.indexOf('configure-aws-credentials'));
   });
 });

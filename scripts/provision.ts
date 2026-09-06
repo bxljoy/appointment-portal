@@ -1,6 +1,6 @@
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { constants } from 'node:fs';
-import { chmod, lstat, mkdir, open, readFile, rename, rm } from 'node:fs/promises';
+import { chmod, lstat, mkdir, open, readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AdminCreateUserCommand, AdminGetUserCommand, AdminSetUserPasswordCommand, CognitoIdentityProviderClient } from '@aws-sdk/client-cognito-identity-provider';
@@ -8,6 +8,7 @@ import { z } from 'zod';
 import type { SeedUser } from '../packages/database/src/seed.js';
 import { SeedUserSchema, type MigrationPayload } from '../packages/database/src/lambda.js';
 import { invokeMigration } from './invoke-migration.js';
+import { writePrivateJson } from './private-file.js';
 
 const poolIdSchema = z.string().regex(/^[\w-]+_[0-9a-zA-Z]+$/).max(55);
 const accountSchema = z.strictObject({
@@ -25,7 +26,7 @@ export type ProvisionDependencies = { cognito: CognitoSender; credentials: Crede
 export class RuntimeCredentialStore implements CredentialStore {
   constructor(readonly directory: string) {}
 
-  private path(poolId: string, email: string): string {
+  filePath(poolId: string, email: string): string {
     poolIdSchema.parse(poolId); accountSchema.shape.email.parse(email);
     return join(this.directory, `${poolId}-${createHash('sha256').update(email).digest('hex')}.json`);
   }
@@ -41,7 +42,7 @@ export class RuntimeCredentialStore implements CredentialStore {
     await this.prepare();
     let handle;
     try {
-      handle = await open(this.path(poolId, email), constants.O_RDONLY | constants.O_NOFOLLOW);
+      handle = await open(this.filePath(poolId, email), constants.O_RDONLY | constants.O_NOFOLLOW);
       const info = await handle.stat();
       if (!info.isFile() || info.nlink !== 1 || (info.mode & 0o777) !== 0o600 || info.uid !== process.getuid?.() || info.size > 16_384) throw new Error('Unsafe credential file.');
       const record = credentialSchema.parse(JSON.parse(await handle.readFile('utf8')));
@@ -56,17 +57,10 @@ export class RuntimeCredentialStore implements CredentialStore {
   async put(input: Credential): Promise<void> {
     const credential = credentialSchema.parse(input);
     await this.prepare();
-    const target = this.path(credential.userPoolId, credential.email);
+    const target = this.filePath(credential.userPoolId, credential.email);
     // Validate an existing file before replacing it; never follow a symlink.
     await this.get(credential.userPoolId, credential.email);
-    const temporary = `${target}.${randomUUID()}.tmp`;
-    const handle = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
-    try {
-      try { await handle.writeFile(`${JSON.stringify(credential)}\n`); await handle.sync(); } finally { await handle.close(); }
-      await rename(temporary, target);
-      const directory = await open(this.directory, constants.O_RDONLY | constants.O_NOFOLLOW);
-      try { await directory.sync(); } finally { await directory.close(); }
-    } finally { await rm(temporary, { force: true }); }
+    await writePrivateJson(target, credential);
   }
 }
 export const provisionUsers = async (userPoolId: string, accounts: ControlledAccount[], deps?: ProvisionDependencies): Promise<SeedUser[]> => {

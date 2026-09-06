@@ -14,6 +14,7 @@ export const manifest: DeploymentManifest = {
   deliveryStack: 'AppointmentPortalDelivery',
   toolkitStack: 'AppointmentPortalToolkit',
   qualifier: 'apptdemo',
+  sourceCommit: 'a'.repeat(40),
   phase: 'ready',
   outputs: { FrontendUrl: 'https://demo.cloudfront.net' },
   resources: [],
@@ -24,16 +25,18 @@ type InventoryFixture = Record<string, ResourceRecord[]>;
 export const fakeInventory = (fixture: InventoryFixture, pageSize = 1): InventoryAdapter & {
   deleted: string[];
   archived: DeploymentManifest[];
+  persisted: DeploymentManifest[];
   stackDeletes: string[];
+  events: string[];
 } => {
   const resources = Object.values(fixture).flat();
   const deleted: string[] = [];
   const archived: DeploymentManifest[] = [];
+  const persisted: DeploymentManifest[] = [];
   const stackDeletes: string[] = [];
+  const events: string[] = [];
   return {
-    deleted,
-    archived,
-    stackDeletes,
+    deleted, archived, persisted, stackDeletes, events,
     async account() { return manifest.account; },
     async page(cursor): Promise<InventoryPage> {
       const start = cursor === undefined ? 0 : Number(cursor);
@@ -41,16 +44,19 @@ export const fakeInventory = (fixture: InventoryFixture, pageSize = 1): Inventor
       const nextCursor = start + pageSize < resources.length ? String(start + pageSize) : undefined;
       return { items, nextCursor };
     },
-    async deleteStack(name) { stackDeletes.push(name); },
-    async waitStackDeleted() {},
-    async deleteResource(resource) { deleted.push(`${resource.type}:${resource.id}`); },
-    async archive(input) { archived.push(structuredClone(input)); },
+    async deleteStack(name) { events.push(`delete-stack:${name}`); stackDeletes.push(name); },
+    async waitStackDeleted(name) { events.push(`wait-stack:${name}`); },
+    async deleteResource(resource) { events.push(`delete-resource:${resource.type}:${resource.id}`); deleted.push(`${resource.type}:${resource.id}`); },
+    async archive(input) { events.push('archive'); archived.push(structuredClone(input)); },
+    async persist(input) { events.push('persist'); persisted.push(structuredClone(input)); },
   };
 };
 
-export const fakeAwsClients = (pages: Record<string, unknown[]> = {}): AwsClients => {
+export const fakeAwsClients = (pages: Record<string, unknown[]> = {}): AwsClients & { commands: object[] } => {
   const positions = new Map<string, number>();
+  const commands: object[] = [];
   const send = async (command: object) => {
+    commands.push(command);
     const name = command.constructor.name;
     if (name === 'ListStackResourcesCommand') throw Object.assign(new Error('stack absent'), { name: 'ValidationError' });
     if (name === 'GetParameterCommand') throw Object.assign(new Error('parameter absent'), { name: 'ParameterNotFound' });
@@ -72,5 +78,6 @@ export const fakeAwsClients = (pages: Record<string, unknown[]> = {}): AwsClient
   return {
     cloudformation: client, cloudfront: client, ec2: client, ecr: client, iam: client, lambda: client,
     rds: client, s3: client, secrets: client, ssm: client, sts: client, logs: client, cognito: client,
-  } as unknown as AwsClients;
+    commands,
+  } as unknown as AwsClients & { commands: object[] };
 };

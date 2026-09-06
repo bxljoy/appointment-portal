@@ -11,7 +11,7 @@ export type PreflightInput = {
 };
 export type PreflightProbe = {
   identity(): Promise<string>;
-  regionalCapabilities(input: { region: string; postgresVersion: string }): Promise<{ postgres: boolean; instanceClass: boolean; proxy: boolean }>;
+  regionalCapabilities(input: { region: string; postgresVersion: string }): Promise<{ postgres: boolean; instanceClass: boolean; proxyApiReachable: boolean }>;
   unreservedConcurrency(region: string): Promise<number>;
   runtimeVersions(): Promise<{ node: string; pnpm: string; docker: string }>;
   gitClean(): Promise<boolean>;
@@ -28,7 +28,8 @@ export const runPreflight = async (raw: PreflightInput, probe: PreflightProbe) =
   const account = await probe.identity();
   if (account !== input.account) throw new Error(`AWS account mismatch: expected ${input.account}.`);
   const regional = await probe.regionalCapabilities({ region: input.region, postgresVersion: input.postgresVersion });
-  if (!regional.postgres || !regional.instanceClass || !regional.proxy) throw new Error('Requested PostgreSQL engine, db.t4g.small class, or RDS Proxy is unavailable in this region.');
+  if (!regional.postgres || !regional.instanceClass) throw new Error('Requested PostgreSQL engine or db.t4g.small class is unavailable in this region.');
+  if (!regional.proxyApiReachable) throw new Error('RDS Proxy API reachability could not be confirmed for this account and region.');
   const unreserved = await probe.unreservedConcurrency(input.region);
   const reservedConcurrencyRequired = 16;
   if (unreserved < 100 + reservedConcurrencyRequired) throw new Error('Insufficient Lambda concurrency headroom for 16 reserved executions while retaining 100 unreserved.');

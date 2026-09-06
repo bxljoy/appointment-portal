@@ -22,6 +22,7 @@
     "demo:setup-delivery": "tsx scripts/setup-delivery.ts .runtime/demo-config.json",
     "demo:deploy": "tsx scripts/deploy.ts .runtime/demo-config.json",
     "demo:verify": "tsx scripts/verify-deployment.ts",
+    "demo:diagnostics": "tsx scripts/capture-diagnostics.ts",
     "demo:destroy": "tsx scripts/cleanup.ts",
     "demo:verify-cleanup": "tsx scripts/verify-cleanup.ts"
   },
