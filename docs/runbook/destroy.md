@@ -16,8 +16,10 @@ Cleanup verifies the STS account before inventory, archives live inventory, writ
 the refreshed combined inventory back to `.runtime/deployment.json`, deletes
 `AppointmentPortal`, waits for CloudFormation, then refreshes service-specific
 paginated inventories. It checks databases, proxies, snapshots and automated
-backups; tagged S3 buckets, versions and delete markers; tagged secrets and log
-groups; network interfaces and endpoints; and tagged toolkit ECR/SSM assets. Immediate force deletion applies only
+backups; tagged S3 buckets, versions and delete markers; tagged secrets and application
+log groups plus `/aws/rds/proxy/appointment-portal-*`; network interfaces and endpoints;
+and tagged toolkit ECR/SSM assets. CloudWatch tag checks use each log group's canonical
+`logGroupArn`, without the API's trailing `:*` representation. Immediate force deletion applies only
 to recorded disposable secrets. Secret values are never read or logged.
 
 Verification exits nonzero for active owned leftovers and unverified blockers.
@@ -39,8 +41,12 @@ pnpm demo:verify-cleanup -- --all
 
 The `--all` path uses authenticated local access to remove the delivery stack,
 toolkit stack, then recorded retained
-assets. Preserve a provider or toolkit used by another project. If deletion fails,
-cleanup inventories exact supported project-owned blockers, removes dependent
+assets. Preserve a provider or toolkit used by another project. If the deletion waiter
+fails, cleanup invalidates its pre-delete inventory, reinspects CloudFormation, and
+continues blocker recovery only when the live stack status is exactly `DELETE_FAILED`.
+Network, authorization, throttling, and other observation errors stop without deleting
+residual resources. After a confirmed `DELETE_FAILED`, cleanup inventories fresh,
+exact supported project-owned blockers, removes dependent
 resources such as an RDS proxy before its database, retries stack deletion once,
 and verifies again. It never directly deletes service-owned interface ENIs or a
 shared GitHub provider. Secrets deletion is asynchronous; see the official

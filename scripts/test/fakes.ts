@@ -46,6 +46,7 @@ export const fakeInventory = (fixture: InventoryFixture, pageSize = 1): Inventor
     },
     async deleteStack(name) { events.push(`delete-stack:${name}`); stackDeletes.push(name); },
     async waitStackDeleted(name) { events.push(`wait-stack:${name}`); },
+    async stackStatus() { return 'DELETE_FAILED'; },
     async deleteResource(resource) { events.push(`delete-resource:${resource.type}:${resource.id}`); deleted.push(`${resource.type}:${resource.id}`); },
     async archive(input) { events.push('archive'); archived.push(structuredClone(input)); },
     async persist(input) { events.push('persist'); persisted.push(structuredClone(input)); },
@@ -58,6 +59,12 @@ export const fakeAwsClients = (pages: Record<string, unknown[]> = {}): AwsClient
   const send = async (command: object) => {
     commands.push(command);
     const name = command.constructor.name;
+    const candidates = pages[name];
+    if (candidates) {
+      const position = positions.get(name) ?? 0;
+      positions.set(name, position + 1);
+      return candidates[position] ?? candidates.at(-1) ?? {};
+    }
     if (name === 'ListStackResourcesCommand') throw Object.assign(new Error('stack absent'), { name: 'ValidationError' });
     if (name === 'GetParameterCommand') throw Object.assign(new Error('parameter absent'), { name: 'ParameterNotFound' });
     const defaults: Record<string, unknown> = {
@@ -68,11 +75,7 @@ export const fakeAwsClients = (pages: Record<string, unknown[]> = {}): AwsClient
       DescribeRepositoriesCommand: { repositories: [] }, ListOpenIDConnectProvidersCommand: { OpenIDConnectProviderList: [] },
       GetCallerIdentityCommand: { Account: manifest.account },
     };
-    const candidates = pages[name];
-    if (!candidates) return defaults[name] ?? {};
-    const position = positions.get(name) ?? 0;
-    positions.set(name, position + 1);
-    return candidates[position] ?? candidates.at(-1) ?? defaults[name] ?? {};
+    return defaults[name] ?? {};
   };
   const client = { send };
   return {

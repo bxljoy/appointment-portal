@@ -89,6 +89,8 @@ describe('GitHub OIDC delivery identity', () => {
     expect(json).not.toContain('iam:DeleteOpenIDConnectProvider');
     expect(json).not.toContain('ec2:DeleteNetworkInterface');
     expect(json).toContain('aws:ResourceTag/Project');
+    expect(JSON.stringify(statementFor('logs:DeleteLogGroup')!.Resource)).toContain(':log-group:/aws/rds/proxy/appointment-portal-*');
+    expect(JSON.stringify(statementFor('logs:ListTagsForResource')!.Resource)).toContain(':log-group:/aws/rds/proxy/appointment-portal-*');
   });
 
   it('grants the paginated tag discovery calls used by lifecycle inventory', () => {

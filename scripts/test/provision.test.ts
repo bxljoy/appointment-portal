@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { AdminCreateUserCommand, AdminGetUserCommand, AdminSetUserPasswordCommand } from '@aws-sdk/client-cognito-identity-provider';
@@ -118,7 +118,7 @@ test.each(['missing-sub', 'mismatched-sub', 'wrong-email', 'unverified', 'duplic
 });
 
 test('persists credentials atomically with mode 0600 under the ignored runtime directory', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'portal-credentials-'));
+  const directory = await mkdtemp(join(await realpath(tmpdir()), 'portal-credentials-'));
   try {
     const store = new RuntimeCredentialStore(directory);
     const record = { ...accounts[0]!, userPoolId, password: 'Runtime-secret!234' };
@@ -133,7 +133,7 @@ test('persists credentials atomically with mode 0600 under the ignored runtime d
 });
 
 test('refuses symlinked credential directories and never overwrites the external target', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'portal-credential-symlink-'));
+  const root = await mkdtemp(join(await realpath(tmpdir()), 'portal-credential-symlink-'));
   try {
     const target = join(root, 'target'); await writeFile(target, 'unchanged');
     const alias = join(root, 'alias'); await symlink(target, alias);
@@ -143,7 +143,7 @@ test('refuses symlinked credential directories and never overwrites the external
 });
 
 test('refuses symlinked and permissive existing credential files on reads and writes', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'portal-credential-file-'));
+  const directory = await mkdtemp(join(await realpath(tmpdir()), 'portal-credential-file-'));
   try {
     const store = new RuntimeCredentialStore(directory);
     const record = { ...accounts[0]!, userPoolId, password: 'Runtime-secret!234' };

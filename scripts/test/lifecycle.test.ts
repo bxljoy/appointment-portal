@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -112,6 +112,17 @@ describe('disposable deployment lifecycle', () => {
     expect(fake.events).not.toContain('migrate');
   });
 
+  it('redeploys a saved bootstrap manifest when the live application stack is absent before invoking it', async () => {
+    const bootstrap = { ...manifest, phase: 'bootstrap' as const, outputs: {
+      ...manifest.outputs, MigrationFunctionName: 'deleted-function', UserPoolId: 'deleted-pool',
+    } };
+    const fake = deps(bootstrap);
+    fake.inspectApplication = async () => ({ exists: false, owned: false });
+    await runDemo(fake);
+    expect(fake.events.indexOf('deploy:bootstrap')).toBeGreaterThan(-1);
+    expect(fake.events.indexOf('deploy:bootstrap')).toBeLessThan(fake.events.indexOf('migrate'));
+  });
+
   it('resumes a partial bootstrap by redeploying bootstrap mode before migration', async () => {
     const partial = { ...manifest, phase: 'bootstrap' as const, outputs: {} };
     const fake = deps(partial);
@@ -191,7 +202,7 @@ describe('disposable deployment lifecycle', () => {
   });
 
   it('rejects a price report whose timestamp is meaningfully in the future', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'portal-future-price-'));
+    const root = await mkdtemp(join(await realpath(tmpdir()), 'portal-future-price-'));
     try {
       const priceReport = join(root, 'prices.json');
       await writeFile(priceReport, JSON.stringify({
@@ -200,7 +211,7 @@ describe('disposable deployment lifecycle', () => {
         assumptions: 'A short disposable verification deployment.',
         rates: { databaseHourly: 0, proxyVcpuHourly: 0, databaseVcpus: 2, interfaceEndpointAzHourly: 0,
           azCount: 2, cognito: 0, logging: 0, storage: 0, transfer: 0 },
-      }));
+      }), { mode: 0o600 });
       const probe = makeAwsPreflightProbe({ account: manifest.account, region: manifest.region, postgresVersion: '17.6',
         durationHours: 1, maxCostUsd: 1, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), accountsFile: priceReport, priceReport }, fakeAwsClients());
       await expect(probe.costRates({ region: manifest.region, postgresVersion: '17.6' })).rejects.toThrow(/future/i);
@@ -208,7 +219,7 @@ describe('disposable deployment lifecycle', () => {
   });
 
   it('maps exactly four controlled aliases to deterministic private credential files for AWS Playwright', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'portal-four-accounts-'));
+    const root = await mkdtemp(join(await realpath(tmpdir()), 'portal-four-accounts-'));
     try {
       const accountsFile = join(root, 'accounts.json');
       await writeFile(accountsFile, JSON.stringify([
@@ -216,7 +227,7 @@ describe('disposable deployment lifecycle', () => {
         { alias: 'patient-b', email: 'patient-b@example.com', displayName: 'Bea Patient', role: 'patient' },
         { alias: 'clinician-a', email: 'clinician-a@example.com', displayName: 'Casey Clinician', role: 'clinician' },
         { alias: 'clinician-b', email: 'clinician-b@example.com', displayName: 'Devon Clinician', role: 'clinician' },
-      ]));
+      ]), { mode: 0o600 });
       const calls: { args: readonly string[]; env?: NodeJS.ProcessEnv }[] = [];
       const runtime = makeAwsDemoDependencies({ account: manifest.account, region: manifest.region, postgresVersion: '17.6', durationHours: 1,
         maxCostUsd: 1, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), accountsFile, priceReport: accountsFile }, fakeAwsClients(),
@@ -229,6 +240,27 @@ describe('disposable deployment lifecycle', () => {
       for (const key of keys) expect(environment[key]).toMatch(/\.runtime\/credentials\/[a-zA-Z0-9_-]+-[a-f0-9]{64}\.json$/);
       expect(JSON.stringify(calls)).not.toContain('password');
     } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it('passes the deployment phase as an explicit CloudFormation parameter on every application deploy', async () => {
+    const commands: (readonly string[])[] = [];
+    const clients = fakeAwsClients({ DescribeStacksCommand: [
+      { Stacks: [{ Tags: [{ Key: 'Project', Value: manifest.projectTag }, { Key: 'SourceCommit', Value: 'a'.repeat(40) }],
+        Parameters: [{ ParameterKey: 'DeploymentPhase', ParameterValue: 'bootstrap' }] }] },
+      { Stacks: [{ Tags: [{ Key: 'Project', Value: manifest.projectTag }, { Key: 'SourceCommit', Value: 'a'.repeat(40) }],
+        Parameters: [{ ParameterKey: 'DeploymentPhase', ParameterValue: 'ready' }] }] },
+    ] });
+    const runtime = makeAwsDemoDependencies({ account: manifest.account, region: manifest.region, postgresVersion: '17.6', durationHours: 1,
+      maxCostUsd: 1, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), accountsFile: '/unused', priceReport: '/unused' }, clients,
+    async (_executable, args) => { commands.push(args); throw new Error('stop after command capture'); });
+    await expect(runtime.deploy('bootstrap')).rejects.toThrow('stop after command capture');
+    await expect(runtime.deploy('ready', manifest.outputs.FrontendUrl)).rejects.toThrow('stop after command capture');
+    const deploys = commands.filter((args) => args.includes('deploy'));
+    expect(deploys).toHaveLength(2);
+    for (const [index, phase] of ['bootstrap', 'ready'].entries()) {
+      const parameter = deploys[index]!.indexOf('--parameters');
+      expect(deploys[index]!.slice(parameter, parameter + 2)).toEqual(['--parameters', `${manifest.appStack}:DeploymentPhase=${phase}`]);
+    }
   });
 
   it('requests S3 checksums and reuses an unchanged immutable frontend asset', async () => {
@@ -278,7 +310,7 @@ describe('disposable deployment lifecycle', () => {
       Outputs: [{ OutputKey: 'FrontendUrl', OutputValue: manifest.outputs.FrontendUrl }] }] }] });
       const runtime = makeAwsDemoDependencies({ account: manifest.account, region: manifest.region, postgresVersion: '17.6', durationHours: 1,
         maxCostUsd: 1, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), accountsFile: '/unused', priceReport: '/unused' }, clients,
-      async () => ({ stdout: '', stderr: '' }));
+      async () => { await writeFile(new URL('../../.runtime/cdk-outputs.json', import.meta.url), '{broken'); return { stdout: '', stderr: '' }; });
       await expect(runtime.deploy('bootstrap')).rejects.toThrow();
       await expect(loadDeploymentManifest()).resolves.toMatchObject({ phase: 'bootstrap', outputs: { FrontendUrl: manifest.outputs.FrontendUrl } });
     } finally {
@@ -305,7 +337,7 @@ describe('disposable deployment lifecycle', () => {
       };
       const runtime = makeAwsDemoDependencies({ account: manifest.account, region: manifest.region, postgresVersion: '17.6', durationHours: 1,
         maxCostUsd: 1, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), accountsFile: '/unused', priceReport: '/unused' }, clients,
-      async () => ({ stdout: '', stderr: '' }));
+      async () => { await writeFile(new URL('../../.runtime/cdk-outputs.json', import.meta.url), JSON.stringify({ [manifest.appStack]: manifest.outputs })); return { stdout: '', stderr: '' }; });
       await expect(runtime.deploy('bootstrap')).rejects.toThrow('inventory unavailable');
       await expect(loadDeploymentManifest()).resolves.toMatchObject({ phase: 'bootstrap' });
     } finally {

@@ -1,8 +1,6 @@
-import { constants } from 'node:fs';
-import { open } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { z } from 'zod';
-import { writePrivateJson } from './private-file.js';
+import { readPrivateFile, writePrivateJson } from './private-file.js';
 
 export const PROJECT_TAG = 'appointment-portal';
 export const APP_STACK = 'AppointmentPortal';
@@ -51,6 +49,7 @@ export type InventoryAdapter = {
   page(cursor?: string): Promise<InventoryPage>;
   deleteStack(name: string): Promise<void>;
   waitStackDeleted(name: string): Promise<void>;
+  stackStatus(name: string): Promise<string | undefined>;
   deleteResource(resource: ResourceRecord): Promise<void>;
   archive(manifest: DeploymentManifest): Promise<void>;
   persist(manifest: DeploymentManifest): Promise<void>;
@@ -60,17 +59,13 @@ export type InventoryAdapter = {
 export const parseDeploymentManifest = (input: unknown): DeploymentManifest => manifestSchema.parse(input);
 
 export const loadDeploymentManifest = async (path = DEPLOYMENT_PATH): Promise<DeploymentManifest | undefined> => {
-  let handle;
   try {
-    handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-    const info = await handle.stat();
-    if (!info.isFile() || info.nlink !== 1 || info.uid !== process.getuid?.() || info.size > 4_000_000) throw new Error('Unsafe deployment manifest.');
-    return parseDeploymentManifest(JSON.parse(await handle.readFile('utf8')));
+    return parseDeploymentManifest(JSON.parse(await readPrivateFile(path, 4_000_000)));
   }
   catch (error) {
     if (hasCode(error, 'ENOENT')) return undefined;
     throw new Error('Deployment manifest is missing or invalid.', { cause: error });
-  } finally { await handle?.close(); }
+  }
 };
 
 export const saveDeploymentManifest = async (input: DeploymentManifest, path = DEPLOYMENT_PATH): Promise<void> => {

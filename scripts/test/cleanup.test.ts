@@ -1,7 +1,7 @@
-import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { cleanup } from '../cleanup.js';
 import { verifyCleanup } from '../verify-cleanup.js';
 import { AwsInventoryAdapter } from '../aws-lifecycle.js';
@@ -46,15 +46,29 @@ describe('inventory-driven cleanup', () => {
 
   it('diagnoses supported owned blockers and retries after a DELETE_FAILED waiter', async () => {
     const snapshot = { type: 'AWS::RDS::DBSnapshot', id: 'blocked-final', owned: true };
-    const inventory = fakeInventory({ snapshots: [snapshot] });
+    const inventory = fakeInventory({});
+    let failureConfirmed = false;
+    inventory.page = async () => ({ items: failureConfirmed ? [snapshot] : [] });
     let waits = 0;
     inventory.waitStackDeleted = async (name) => {
       inventory.events.push(`wait-stack:${name}`);
       if (waits++ === 0) throw new Error('DELETE_FAILED');
     };
-    await cleanup(manifest, inventory);
+    const inspected = vi.fn(async () => { failureConfirmed = true; return 'DELETE_FAILED'; });
+    await cleanup(manifest, Object.assign(inventory, { stackStatus: inspected }));
+    expect(inspected).toHaveBeenCalledWith(manifest.appStack);
     expect(inventory.deleted).toContain('AWS::RDS::DBSnapshot:blocked-final');
     expect(inventory.stackDeletes).toEqual([manifest.appStack, manifest.appStack]);
+  });
+
+  it('rethrows an observation failure without deleting blockers or retrying the stack', async () => {
+    const snapshot = { type: 'AWS::RDS::DBSnapshot', id: 'must-not-delete', owned: true };
+    const inventory = fakeInventory({ snapshots: [snapshot] });
+    inventory.waitStackDeleted = async () => { throw new Error('network timeout'); };
+    const inspected = vi.fn(async () => { throw new Error('throttled while observing stack'); });
+    await expect(cleanup(manifest, Object.assign(inventory, { stackStatus: inspected }))).rejects.toThrow(/throttled/i);
+    expect(inventory.deleted).toEqual([]);
+    expect(inventory.stackDeletes).toEqual([manifest.appStack]);
   });
 
   it('deletes a proxy blocker before its database when recovering DELETE_FAILED', async () => {
@@ -136,7 +150,7 @@ describe('inventory-driven cleanup', () => {
         { TagSet: [{ Key: 'Project', Value: manifest.projectTag }] },
         { TagSet: [{ Key: 'Project', Value: 'shared-project' }] },
       ],
-      DescribeLogGroupsCommand: [{ logGroups: [{ logGroupName: '/appointment-portal/stale', arn: 'arn:log:stale' }] }],
+      DescribeLogGroupsCommand: [{ logGroups: [{ logGroupName: '/appointment-portal/stale', logGroupArn: 'arn:log:stale' }] }, { logGroups: [] }],
       DescribeRepositoriesCommand: [{ repositories: [{ repositoryName: 'cdk-apptdemo-container-assets-111111111111-eu-north-1', repositoryArn: 'arn:ecr:tagged' }], nextToken: 'next' }, { repositories: [] }],
       DescribeParametersCommand: [{ Parameters: [{ Name: '/cdk-bootstrap/apptdemo/version' }], NextToken: 'next' }, { Parameters: [] }],
       ListTagsForResourceCommand: [
@@ -152,6 +166,38 @@ describe('inventory-driven cleanup', () => {
     expect(clients.commands.filter((command) => command.constructor.name === 'ListBucketsCommand')).toHaveLength(2);
     expect(clients.commands.filter((command) => command.constructor.name === 'DescribeRepositoriesCommand')).toHaveLength(2);
     expect(clients.commands.filter((command) => command.constructor.name === 'DescribeParametersCommand')).toHaveLength(2);
+  });
+
+  it('discovers and tags the exact RDS proxy log-group prefix using logGroupArn', async () => {
+    const logGroupArn = `arn:aws:logs:${manifest.region}:${manifest.account}:log-group:/aws/rds/proxy/appointment-portal-demo`;
+    const clients = fakeAwsClients({
+      DescribeLogGroupsCommand: [
+        { logGroups: [] },
+        { logGroups: [{ logGroupName: '/aws/rds/proxy/appointment-portal-demo', logGroupArn, arn: `${logGroupArn}:*` }] },
+      ],
+      ListTagsForResourceCommand: [{ tags: { Project: manifest.projectTag } }],
+    });
+    const result = await verifyCleanup(manifest, new AwsInventoryAdapter(manifest, clients));
+    expect(result.remaining).toContainEqual(expect.objectContaining({ id: '/aws/rds/proxy/appointment-portal-demo', arn: logGroupArn, owned: true }));
+    const tagCommand = clients.commands.find((command) => command.constructor.name === 'ListTagsForResourceCommand') as { input: { resourceArn: string } };
+    expect(tagCommand.input.resourceArn).toBe(logGroupArn);
+    expect(clients.commands.filter((command) => command.constructor.name === 'DescribeLogGroupsCommand').map((command) =>
+      (command as { input: { logGroupNamePrefix: string } }).input.logGroupNamePrefix)).toEqual([
+      '/appointment-portal/', '/aws/rds/proxy/appointment-portal-',
+    ]);
+  });
+
+  it('invalidates cached inventory as soon as stack deletion is requested', async () => {
+    const clients = fakeAwsClients({
+      DescribeStacksCommand: [{ Stacks: [{ Tags: [{ Key: 'Project', Value: manifest.projectTag }] }] }],
+      ListStackResourcesCommand: [{ StackResourceSummaries: [] }],
+      DescribeDBSnapshotsCommand: [{ DBSnapshots: [] }, { DBSnapshots: [] }],
+    });
+    const adapter = new AwsInventoryAdapter(manifest, clients);
+    await adapter.page();
+    await adapter.deleteStack(manifest.appStack);
+    await adapter.page();
+    expect(clients.commands.filter((command) => command.constructor.name === 'DescribeDBSnapshotsCommand')).toHaveLength(2);
   });
 
   it('discovers a tagged automated backup without trusting a stale database output', async () => {
@@ -278,7 +324,7 @@ describe('inventory-driven cleanup', () => {
   });
 
   it('refuses a symlinked pre-destroy archive without changing its target', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'portal-archive-symlink-'));
+    const root = await mkdtemp(join(await realpath(tmpdir()), 'portal-archive-symlink-'));
     try {
       const victim = join(root, 'victim'); await writeFile(victim, 'unchanged');
       const archive = join(root, 'archive.json'); await symlink(victim, archive);
@@ -289,7 +335,7 @@ describe('inventory-driven cleanup', () => {
   });
 
   it('refuses a symlinked archive ancestor before creating anything through it', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'portal-archive-ancestor-symlink-'));
+    const root = await mkdtemp(join(await realpath(tmpdir()), 'portal-archive-ancestor-symlink-'));
     try {
       const target = join(root, 'target'); await mkdir(target);
       const alias = join(root, 'alias'); await symlink(target, alias);
@@ -297,5 +343,19 @@ describe('inventory-driven cleanup', () => {
       await expect(adapter.archive(manifest)).rejects.toThrow(/unsafe|symlink/i);
       expect(await readdir(target)).toEqual([]);
     } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it('rejects a symlink ancestor before touching its target even when ownership appears different', async () => {
+    const root = await mkdtemp(join(await realpath(tmpdir()), 'portal-archive-foreign-symlink-'));
+    const actualUid = process.getuid?.();
+    if (actualUid === undefined) return;
+    const getuid = vi.spyOn(process as unknown as { getuid(): number }, 'getuid').mockReturnValue(actualUid + 1);
+    try {
+      const target = join(root, 'target'); await mkdir(target);
+      const alias = join(root, 'alias'); await symlink(target, alias);
+      const adapter = new AwsInventoryAdapter(manifest, fakeAwsClients(), { archivePath: join(alias, 'nested', 'archive.json') });
+      await expect(adapter.archive(manifest)).rejects.toThrow(/unsafe|symlink/i);
+      expect(await readdir(target)).toEqual([]);
+    } finally { getuid.mockRestore(); await rm(root, { recursive: true, force: true }); }
   });
 });

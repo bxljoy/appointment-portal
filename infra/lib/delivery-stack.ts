@@ -81,7 +81,10 @@ export class DeliveryStack extends Stack {
         'ecr:DescribeRepositories', 'ssm:DescribeParameters', 'iam:ListOpenIDConnectProviders'], resources: ['*'],
     }));
     this.role.addToPolicy(new iam.PolicyStatement({
-      actions: ['logs:ListTagsForResource'], resources: [`arn:${this.partition}:logs:${region}:${account}:log-group:/appointment-portal/*`],
+      actions: ['logs:ListTagsForResource'], resources: [
+        `arn:${this.partition}:logs:${region}:${account}:log-group:/appointment-portal/*`,
+        `arn:${this.partition}:logs:${region}:${account}:log-group:/aws/rds/proxy/appointment-portal-*`,
+      ],
     }));
     this.role.addToPolicy(new iam.PolicyStatement({
       actions: ['ecr:ListTagsForResource'], resources: [`arn:${this.partition}:ecr:${region}:${account}:repository/cdk-${config.qualifier}-container-assets-${account}-${region}`],
@@ -104,7 +107,10 @@ export class DeliveryStack extends Stack {
       conditions: projectTagCondition,
     }));
     this.role.addToPolicy(new iam.PolicyStatement({
-      actions: ['logs:DeleteLogGroup'], resources: [`arn:${this.partition}:logs:${region}:${account}:log-group:/appointment-portal/*`],
+      actions: ['logs:DeleteLogGroup'], resources: [
+        `arn:${this.partition}:logs:${region}:${account}:log-group:/appointment-portal/*`,
+        `arn:${this.partition}:logs:${region}:${account}:log-group:/aws/rds/proxy/appointment-portal-*`,
+      ],
       conditions: projectTagCondition,
     }));
     this.role.addToPolicy(new iam.PolicyStatement({

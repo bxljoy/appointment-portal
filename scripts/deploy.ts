@@ -11,7 +11,7 @@ export type DemoConfig = {
   durationHours: number; maxCostUsd: number;
   sourceCommit?: string;
 };
-export type StackInspection = { exists: boolean; owned: boolean; phase?: 'bootstrap' | 'ready'; outputs?: Record<string, string>; sourceCommit?: string };
+export type StackInspection = { exists: boolean; owned: boolean; phase?: 'bootstrap' | 'ready'; outputs?: Record<string, string>; sourceCommit?: string; status?: string };
 export type DemoDependencies = {
   config: DemoConfig;
   loadManifest(): Promise<DeploymentManifest | undefined>;
@@ -41,6 +41,7 @@ export const runDemo = async (deps: DemoDependencies): Promise<DeploymentManifes
     throw new Error('Live application stack source commit does not match this checkout.');
   }
   if (saved?.phase === 'ready' && !application.exists) throw new Error('Saved ready deployment is missing from the live account.');
+  if (saved?.phase === 'bootstrap' && !application.exists) saved = undefined;
   if (application.exists && saved?.phase === 'ready' && application.phase !== 'ready') throw new Error('Live stack phase conflicts with the saved ready manifest.');
   if (application.exists && (!saved || application.phase === 'ready' && saved.phase !== 'ready')) {
     if (!application.phase || !application.outputs) throw new Error('Live application stack lacks recoverable phase or outputs.');

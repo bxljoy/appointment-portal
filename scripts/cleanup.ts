@@ -46,7 +46,9 @@ export const cleanup = async (manifest: DeploymentManifest, inventory: Inventory
 const deleteStackWithRecovery = async (name: string, inventory: InventoryAdapter, inScope: (resource: ResourceRecord) => boolean): Promise<void> => {
   await inventory.deleteStack(name);
   try { await inventory.waitStackDeleted(name); return; }
-  catch {
+  catch (error) {
+    const status = await inventory.stackStatus(name);
+    if (status !== 'DELETE_FAILED') throw error;
     const blockers = ordered((await collectInventory(inventory)).filter((resource) => resource.owned && resource.state !== 'scheduled' && inScope(resource) &&
       (inventory.canDeleteResource?.(resource) ?? true)));
     for (const blocker of blockers) await inventory.deleteResource(blocker);

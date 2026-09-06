@@ -106,6 +106,10 @@ credentials, runs preflight, deploys bootstrap mode, saves the manifest, migrate
 provisions fictional users, waits for proxy health, deploys ready mode with the
 literal CloudFront origin and `portal_app` proxy auth, verifies migration again,
 saves ready state, publishes, invalidates, and runs deployed tests.
+Each application deployment passes
+`AppointmentPortal:DeploymentPhase=bootstrap|ready` explicitly through CDK's
+`--parameters` option. The live parameter therefore records the deployed phase even
+when CloudFormation would otherwise reuse a previous parameter value.
 
 A saved ready deployment migrates in place and never restores administrator proxy
 auth. Function errors, unhealthy targets, callback mismatch, unsafe publication, or
@@ -116,11 +120,26 @@ verification.
 The live application stack carries project and source commit tags plus a deployment
 phase parameter. A missing local manifest is restored from a matching live stack before any
 function is invoked. A saved ready manifest whose stack is absent, or a live stack
-from another commit, stops before migration. After a deployment mutation the runner
+from another commit, stops before migration. A saved bootstrap manifest whose live
+application stack is absent is treated as stale and is redeployed before any recorded
+function or user pool is invoked. After a deployment mutation the runner
 writes a minimal private recovery manifest before parsing CDK outputs, then enriches
 it atomically after inventory succeeds. Failed runs capture sanitized CloudFormation
-events in `.runtime/diagnostics.json`, scan that file for credential material, and
-upload it with the recovery inventory.
+events in `.runtime/diagnostics.json`; arbitrary CloudFormation status reasons are
+omitted, and identifiers and statuses must match fixed allowlists. The workflow scans
+that file for credential material before uploading it with the recovery inventory.
+
+`pnpm demo:verify` rereads the matching private demo configuration and maps exactly
+`PATIENT_A`, `PATIENT_B`, `CLINICIAN_A`, and `CLINICIAN_B` to deterministic `0600`
+credential file paths. Playwright receives those paths, never generated passwords, in
+its environment. Runtime configuration, account, output, manifest, inventory, and
+credential reads and writes reject symlinked path components before access.
+
+Delivery setup checkpoints the minimal toolkit recovery manifest immediately after
+bootstrap returns and again after ownership is confirmed. It does the same around
+the delivery-stack deployment before parsing outputs or collecting detailed resource
+inventory, so an interrupted first setup remains discoverable by the local `--all`
+cleanup path.
 
 The workflow uses concurrency group `appointment-portal-demo` with cancellation
 disabled. A lost runner cannot guarantee an `always()` cleanup step. Restore the

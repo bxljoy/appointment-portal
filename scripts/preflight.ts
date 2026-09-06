@@ -1,5 +1,4 @@
 import { spawn } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
@@ -57,14 +56,12 @@ export const runProcess: ProcessRunner = (executable, args, options = {}) => new
   child.on('close', (code) => code === 0 ? resolvePromise({ stdout, stderr }) : reject(new Error(`${executable} exited with status ${code ?? 'unknown'}.`)));
 });
 
-const cliSchema = inputSchema.extend({ priceReport: z.string().min(1) });
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     if (process.argv.length !== 3) throw new Error('Expected one .runtime preflight configuration path.');
-    const config = cliSchema.parse(JSON.parse(await readFile(process.argv[2]!, 'utf8')));
     const { makeAwsPreflightProbe, readAwsDemoInput } = await import('./aws-lifecycle.js');
     const full = await readAwsDemoInput(process.argv[2]!);
-    const report = await runPreflight(config, makeAwsPreflightProbe(full));
+    const report = await runPreflight(full, makeAwsPreflightProbe(full));
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : 'Preflight failed.'}\n`);

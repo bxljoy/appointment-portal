@@ -21,7 +21,7 @@ import { runPreflight, runProcess, type PreflightProbe, type ProcessRunner } fro
 import { publishFrontend, type PublishFile } from './publish.js';
 import { APP_STACK, DELIVERY_STACK, PROJECT_TAG, QUALIFIER, TOOLKIT_STACK, deduplicateResources, saveDeploymentManifest, type DeploymentManifest, type InventoryAdapter, type InventoryPage, type ResourceRecord } from './lifecycle-types.js';
 import type { DemoConfig, DemoDependencies, StackInspection } from './deploy.js';
-import { writePrivateJson } from './private-file.js';
+import { readPrivateFile, writePrivateJson } from './private-file.js';
 
 const configSchema = z.strictObject({
   account: z.string().regex(/^\d{12}$/), region: z.string().regex(/^[a-z]{2}(?:-[a-z]+)+-[1-9]\d*$/),
@@ -61,7 +61,7 @@ const clientsFor = (region: string): AwsClients => ({
   sts: new STSClient({ region }), logs: new CloudWatchLogsClient({ region }), cognito: new CognitoIdentityProviderClient({ region }),
 });
 
-export const readAwsDemoInput = async (path: string): Promise<AwsDemoInput> => configSchema.parse(JSON.parse(await readFile(path, 'utf8')));
+export const readAwsDemoInput = async (path: string): Promise<AwsDemoInput> => configSchema.parse(JSON.parse(await readPrivateFile(path)));
 
 export const makeAwsPreflightProbe = (input: AwsDemoInput, clients: AwsClients = clientsFor(input.region), runner: ProcessRunner = runProcess): PreflightProbe => ({
   async identity() { return z.string().regex(/^\d{12}$/).parse((await clients.sts.send(new GetCallerIdentityCommand({}))).Account); },
@@ -82,7 +82,7 @@ export const makeAwsPreflightProbe = (input: AwsDemoInput, clients: AwsClients =
   },
   async gitClean() { return (await runner('git', ['status', '--porcelain'])).stdout.trim() === ''; },
   async costRates() {
-    const report = priceSchema.parse(JSON.parse(await readFile(input.priceReport, 'utf8')));
+    const report = priceSchema.parse(JSON.parse(await readPrivateFile(input.priceReport)));
     if (report.region !== input.region) throw new Error('Price report region does not match the deployment.');
     const age = Date.now() - new Date(report.checkedAt).getTime();
     if (age < -5 * 60_000) throw new Error('Price report timestamp is meaningfully in the future.');
@@ -117,9 +117,10 @@ export const makeAwsDemoDependencies = (input: AwsDemoInput, clients = clientsFo
     },
     deploy: async (phase, frontendUrl) => {
       const outputPath = resolve('.runtime/cdk-outputs.json');
+      await writePrivateJson(outputPath, {});
       try {
         await runner('pnpm', ['--filter', '@portal/infra', 'exec', 'cdk', 'deploy', APP_STACK, '--exclusively', '--require-approval', 'never',
-          '--outputs-file', outputPath, ...contextArgs(input, phase, frontendUrl)]);
+          '--outputs-file', outputPath, '--parameters', `${APP_STACK}:DeploymentPhase=${phase}`, ...contextArgs(input, phase, frontendUrl)]);
       } catch (error) {
         const live = await inspectStackOwnership(clients.cloudformation, APP_STACK);
         if (live.exists && live.owned) await persistRecovery(live.phase ?? phase, live.outputs ?? activeManifest?.outputs ?? {}, []);
@@ -128,7 +129,7 @@ export const makeAwsDemoDependencies = (input: AwsDemoInput, clients = clientsFo
       const live = await inspectStackOwnership(clients.cloudformation, APP_STACK);
       if (!live.exists || !live.owned) throw new Error('Deployed application stack does not have established ownership.');
       await persistRecovery(live.phase ?? phase, live.outputs ?? {}, []);
-      const outputsFile = z.record(z.string(), z.record(z.string(), z.string())).parse(JSON.parse(await readFile(outputPath, 'utf8')));
+      const outputsFile = z.record(z.string(), z.record(z.string(), z.string())).parse(JSON.parse(await readPrivateFile(outputPath)));
       const outputs = outputsFile[APP_STACK];
       if (!outputs) throw new Error('CDK outputs did not contain the application stack.');
       await persistRecovery(phase, outputs, []);
@@ -145,7 +146,7 @@ export const makeAwsDemoDependencies = (input: AwsDemoInput, clients = clientsFo
     },
     migrate: async () => { await invokeMigration(requiredManifestOutput(activeManifest, 'MigrationFunctionName'), { action: 'migrate' }, clients.lambda); },
     provision: async () => {
-      const accounts = controlledAccountsSchema.parse(JSON.parse(await readFile(input.accountsFile, 'utf8')));
+      const accounts = await readControlledAccounts(input.accountsFile);
       const users = await provisionUsers(requiredManifestOutput(activeManifest, 'UserPoolId'), accounts.map(({ email, displayName, role }) => ({ email, displayName, role })) as ControlledAccount[], { cognito: clients.cognito, credentials });
       await invokeMigration(requiredManifestOutput(activeManifest, 'MigrationFunctionName'), { action: 'seed', users, now: new Date().toISOString() }, clients.lambda);
     },
@@ -154,10 +155,7 @@ export const makeAwsDemoDependencies = (input: AwsDemoInput, clients = clientsFo
     publish: async (manifest) => publishBuiltFrontend(manifest, clients),
     verify: async (manifest) => {
       const frontendUrl = requiredManifestOutput(manifest, 'FrontendUrl');
-      const accounts = controlledAccountsSchema.parse(JSON.parse(await readFile(input.accountsFile, 'utf8')));
-      const fileEnvironment = Object.fromEntries(accounts.map((account) => [
-        `PORTAL_E2E_${account.alias.replace('-', '_').toUpperCase()}_FILE`, credentials.filePath(requiredManifestOutput(manifest, 'UserPoolId'), account.email),
-      ]));
+      const fileEnvironment = await awsPlaywrightFileEnvironment(input, manifest, credentials);
       await runner('pnpm', ['exec', 'playwright', 'test', '--project=aws'], { env: {
         ...process.env, ...fileEnvironment, PORTAL_E2E_AWS: '1', PORTAL_E2E_AWS_URL: frontendUrl,
       } });
@@ -182,14 +180,14 @@ const inspectStackOwnership = async (client: CloudFormationClient, name: string)
     const outputs = Object.fromEntries((stack?.Outputs ?? []).flatMap((output) => output.OutputKey && output.OutputValue ? [[output.OutputKey, output.OutputValue]] : []));
     return { exists: Boolean(stack), owned: tag('Project') === PROJECT_TAG,
       ...(phase === 'bootstrap' || phase === 'ready' ? { phase } : {}), ...(Object.keys(outputs).length ? { outputs } : {}),
-      ...(tag('SourceCommit') ? { sourceCommit: tag('SourceCommit') } : {}) };
+      ...(tag('SourceCommit') ? { sourceCommit: tag('SourceCommit') } : {}), ...(stack?.StackStatus ? { status: stack.StackStatus } : {}) };
   } catch (error) {
     if (isValidationError(error)) return { exists: false, owned: false };
     throw error;
   }
 };
 
-export const listStackResources = async (client: CloudFormationClient, name: string, prefix: string): Promise<ResourceRecord[]> => {
+export const listStackResources = async (client: Pick<CloudFormationClient, 'send'>, name: string, prefix: string): Promise<ResourceRecord[]> => {
   const resources: ResourceRecord[] = [];
   let NextToken: string | undefined;
   do {
@@ -202,7 +200,7 @@ export const listStackResources = async (client: CloudFormationClient, name: str
   return resources;
 };
 
-const maybeListStackResources = async (client: CloudFormationClient, name: string, prefix: string): Promise<ResourceRecord[]> => {
+const maybeListStackResources = async (client: Pick<CloudFormationClient, 'send'>, name: string, prefix: string): Promise<ResourceRecord[]> => {
   try { return await listStackResources(client, name, prefix); }
   catch (error) { if (isValidationError(error)) return []; throw error; }
 };
@@ -219,6 +217,17 @@ const waitForProxy = async (client: RDSClient, proxyName: string): Promise<void>
 
 const requiredManifestOutput = (manifest: DeploymentManifest | undefined, name: string): string => {
   const value = manifest?.outputs[name]; if (!value) throw new Error(`Deployment output ${name} is unavailable.`); return value;
+};
+
+const readControlledAccounts = async (path: string) => controlledAccountsSchema.parse(JSON.parse(await readPrivateFile(path)));
+
+export const awsPlaywrightFileEnvironment = async (input: Pick<AwsDemoInput, 'accountsFile'>, manifest: DeploymentManifest,
+  credentials = new RuntimeCredentialStore(resolve('.runtime/credentials'))): Promise<Record<string, string>> => {
+  const accounts = await readControlledAccounts(input.accountsFile);
+  const userPoolId = requiredManifestOutput(manifest, 'UserPoolId');
+  return Object.fromEntries(accounts.map((account) => [
+    `PORTAL_E2E_${account.alias.replace('-', '_').toUpperCase()}_FILE`, credentials.filePath(userPoolId, account.email),
+  ]));
 };
 
 const publishBuiltFrontend = async (manifest: DeploymentManifest, clients: AwsClients): Promise<void> => {
@@ -292,8 +301,15 @@ export class AwsInventoryAdapter implements InventoryAdapter {
     if (!stack.exists) return;
     if (!stack.owned) throw new Error(`Refusing to delete stack ${name} without established project ownership.`);
     await this.clients.cloudformation.send(new DeleteStackCommand({ StackName: name }));
+    this.resources = undefined;
   }
   async waitStackDeleted(name: string) { const result = await waitUntilStackDeleteComplete({ client: this.clients.cloudformation, maxWaitTime: 1800 }, { StackName: name }); if (result.state !== 'SUCCESS') throw new Error(`Stack ${name} deletion did not complete.`); this.resources = undefined; }
+  async stackStatus(name: string) {
+    const stack = await inspectStackOwnership(this.clients.cloudformation, name);
+    if (!stack.exists) return undefined;
+    if (!stack.owned) throw new Error(`Refusing to inspect stack ${name} without established project ownership.`);
+    return stack.status;
+  }
   async deleteResource(resource: ResourceRecord) {
     const type = resource.type.replace(/^(?:Application|Bootstrap|Delivery)::/, '');
     if (!resource.owned) throw new Error(`Refusing to delete unowned resource ${type}:${resource.id}.`);
@@ -437,17 +453,19 @@ export class AwsInventoryAdapter implements InventoryAdapter {
       }
       secretToken = page.NextToken;
     } while (secretToken);
-    let logToken: string | undefined;
-    do {
-      const page = await this.clients.logs.send(new DescribeLogGroupsCommand({ logGroupNamePrefix: '/appointment-portal/', nextToken: logToken }));
-      for (const group of page.logGroups ?? []) if (group.logGroupName && group.arn) {
-        const tagResponse = await this.clients.logs.send(new LogsListTagsForResourceCommand({ resourceArn: group.arn }));
-        const tags = Object.entries(tagResponse.tags ?? {}).map(([Key, Value]) => ({ Key, Value }));
-        const record = discovered('AWS::Logs::LogGroup', group.logGroupName, group.arn, tags);
-        if (record) resources.push(record);
-      }
-      logToken = page.nextToken;
-    } while (logToken);
+    for (const logGroupNamePrefix of ['/appointment-portal/', '/aws/rds/proxy/appointment-portal-']) {
+      let logToken: string | undefined;
+      do {
+        const page = await this.clients.logs.send(new DescribeLogGroupsCommand({ logGroupNamePrefix, nextToken: logToken }));
+        for (const group of page.logGroups ?? []) if (group.logGroupName && group.logGroupArn) {
+          const tagResponse = await this.clients.logs.send(new LogsListTagsForResourceCommand({ resourceArn: group.logGroupArn }));
+          const tags = Object.entries(tagResponse.tags ?? {}).map(([Key, Value]) => ({ Key, Value }));
+          const record = discovered('AWS::Logs::LogGroup', group.logGroupName, group.logGroupArn, tags);
+          if (record) resources.push(record);
+        }
+        logToken = page.nextToken;
+      } while (logToken);
+    }
     let bucketToken: string | undefined;
     do {
       const page = await this.clients.s3.send(new ListBucketsCommand({ ContinuationToken: bucketToken, BucketRegion: this.manifest.region }));

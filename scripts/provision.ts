@@ -1,6 +1,4 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { constants } from 'node:fs';
-import { chmod, lstat, mkdir, open, readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AdminCreateUserCommand, AdminGetUserCommand, AdminSetUserPasswordCommand, CognitoIdentityProviderClient } from '@aws-sdk/client-cognito-identity-provider';
@@ -8,7 +6,7 @@ import { z } from 'zod';
 import type { SeedUser } from '../packages/database/src/seed.js';
 import { SeedUserSchema, type MigrationPayload } from '../packages/database/src/lambda.js';
 import { invokeMigration } from './invoke-migration.js';
-import { writePrivateJson } from './private-file.js';
+import { ensurePrivateDirectory, readPrivateFile, writePrivateJson } from './private-file.js';
 
 const poolIdSchema = z.string().regex(/^[\w-]+_[0-9a-zA-Z]+$/).max(55);
 const accountSchema = z.strictObject({
@@ -32,26 +30,20 @@ export class RuntimeCredentialStore implements CredentialStore {
   }
 
   private async prepare(): Promise<void> {
-    try { await mkdir(this.directory, { mode: 0o700 }); } catch (error) { if (!hasCode(error, 'EEXIST')) throw error; }
-    const info = await lstat(this.directory);
-    if (!info.isDirectory() || info.isSymbolicLink() || info.uid !== process.getuid?.()) throw new Error('Unsafe runtime directory.');
-    await chmod(this.directory, 0o700);
+    await ensurePrivateDirectory(this.directory);
   }
 
   async get(poolId: string, email: string): Promise<Credential | undefined> {
     await this.prepare();
-    let handle;
     try {
-      handle = await open(this.filePath(poolId, email), constants.O_RDONLY | constants.O_NOFOLLOW);
-      const info = await handle.stat();
-      if (!info.isFile() || info.nlink !== 1 || (info.mode & 0o777) !== 0o600 || info.uid !== process.getuid?.() || info.size > 16_384) throw new Error('Unsafe credential file.');
-      const record = credentialSchema.parse(JSON.parse(await handle.readFile('utf8')));
+      const record = credentialSchema.parse(JSON.parse(await readPrivateFile(this.filePath(poolId, email), 16_384)));
       if (record.userPoolId !== poolId || record.email !== email) throw new Error('Credential identity mismatch.');
       return record;
     } catch (error) {
       if (hasCode(error, 'ENOENT')) return undefined;
+      if (error instanceof Error && /Unsafe private/.test(error.message)) throw new Error('Unsafe credential file.', { cause: error });
       throw error;
-    } finally { await handle?.close(); }
+    }
   }
 
   async put(input: Credential): Promise<void> {
@@ -131,7 +123,7 @@ const hasName = (error: unknown, name: string): boolean => typeof error === 'obj
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     if (process.argv.length !== 3) throw new Error('Expected one setup configuration path.');
-    await setupAwsDatabase(JSON.parse(await readFile(process.argv[2]!, 'utf8')) as SetupConfig);
+    await setupAwsDatabase(JSON.parse(await readPrivateFile(process.argv[2]!)) as SetupConfig);
     process.stdout.write('Private schema and pre-confirmed demo account setup completed. Credentials are in .runtime/.\n');
   } catch {
     process.stderr.write('Private setup failed. Check the controlled configuration and retry; credentials remain in .runtime/.\n');

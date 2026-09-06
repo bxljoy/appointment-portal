@@ -7,7 +7,7 @@ import { writePrivateJson } from './private-file.js';
 type EventClient = Pick<CloudFormationClient, 'send'>;
 
 export const captureDiagnostics = async (manifest: DeploymentManifest | undefined, client?: EventClient, path = resolve('.runtime/diagnostics.json')) => {
-  const events: { stack: string; logicalResourceId?: string; resourceType?: string; status?: string; reason?: string; timestamp?: string }[] = [];
+  const events: { stack: string; logicalResourceId?: string; resourceType?: string; status?: string; timestamp?: string }[] = [];
   if (manifest) {
     const cloudformation = client ?? new CloudFormationClient({ region: manifest.region });
     const stacks: string[] = [manifest.appStack, ...(manifest.deliveryStack ? [manifest.deliveryStack] : []), manifest.toolkitStack];
@@ -17,11 +17,10 @@ export const captureDiagnostics = async (manifest: DeploymentManifest | undefine
         try {
           const page = await cloudformation.send(new DescribeStackEventsCommand({ StackName: stack, NextToken }));
           for (const event of page.StackEvents ?? []) events.push({ stack,
-            ...(event.LogicalResourceId ? { logicalResourceId: event.LogicalResourceId } : {}),
-            ...(event.ResourceType ? { resourceType: event.ResourceType } : {}),
-            ...(event.ResourceStatus ? { status: event.ResourceStatus } : {}),
-            ...(event.ResourceStatusReason ? { reason: sanitizeReason(event.ResourceStatusReason) } : {}),
-            ...(event.Timestamp ? { timestamp: event.Timestamp.toISOString() } : {}),
+            ...(isSafeLogicalId(event.LogicalResourceId) ? { logicalResourceId: event.LogicalResourceId } : {}),
+            ...(isSafeResourceType(event.ResourceType) ? { resourceType: event.ResourceType } : {}),
+            ...(event.ResourceStatus && SAFE_STATUSES.has(event.ResourceStatus) ? { status: event.ResourceStatus } : {}),
+            ...(event.Timestamp instanceof Date ? { timestamp: event.Timestamp.toISOString() } : {}),
           });
           NextToken = page.NextToken;
         } catch { NextToken = undefined; }
@@ -33,9 +32,16 @@ export const captureDiagnostics = async (manifest: DeploymentManifest | undefine
   return diagnostic;
 };
 
-const sanitizeReason = (reason: string) => [...reason].map((character) => character.charCodeAt(0) < 32 ? ' ' : character).join('')
-  .replace(/\b(password|token|secret|authorization|credential)(\s*[:=]\s*)\S+/gi, '$1$2[REDACTED]')
-  .slice(0, 1_000);
+const SAFE_STATUSES = new Set([
+  'CREATE_IN_PROGRESS', 'CREATE_FAILED', 'CREATE_COMPLETE', 'ROLLBACK_IN_PROGRESS', 'ROLLBACK_FAILED', 'ROLLBACK_COMPLETE',
+  'DELETE_IN_PROGRESS', 'DELETE_FAILED', 'DELETE_COMPLETE', 'UPDATE_IN_PROGRESS', 'UPDATE_COMPLETE_CLEANUP_IN_PROGRESS',
+  'UPDATE_COMPLETE', 'UPDATE_FAILED', 'UPDATE_ROLLBACK_IN_PROGRESS', 'UPDATE_ROLLBACK_FAILED',
+  'UPDATE_ROLLBACK_COMPLETE_CLEANUP_IN_PROGRESS', 'UPDATE_ROLLBACK_COMPLETE', 'REVIEW_IN_PROGRESS',
+  'IMPORT_IN_PROGRESS', 'IMPORT_COMPLETE', 'IMPORT_ROLLBACK_IN_PROGRESS', 'IMPORT_ROLLBACK_FAILED', 'IMPORT_ROLLBACK_COMPLETE',
+]);
+const isSafeLogicalId = (value?: string): value is string => Boolean(value && /^[A-Za-z][A-Za-z0-9]{0,254}$/.test(value) &&
+  !/(?:password|token|secret|authorization|credential)/i.test(value));
+const isSafeResourceType = (value?: string): value is string => Boolean(value && /^AWS::[A-Za-z0-9]+::[A-Za-z0-9]+$/.test(value));
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try { await captureDiagnostics(await loadDeploymentManifest()); process.stdout.write('Sanitized CloudFormation diagnostics captured.\n'); }
