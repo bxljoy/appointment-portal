@@ -1,3 +1,5 @@
+import { stdout } from 'node:process';
+
 export type CompletionLog = {
   requestId: string;
   operation: string;
@@ -8,7 +10,9 @@ export type CompletionLog = {
 
 export const writeCompletionLog = (
   event: CompletionLog & Record<string, unknown>,
-  write: (line: string) => void = console.log,
+  // Lambda's JSON console wrapper would put a serialized string in `message`.
+  // A single stdout JSON line preserves these application fields at the top level.
+  write: (line: string) => void = (line) => { stdout.write(`${line}\n`); },
 ): void => {
   const { requestId, operation, status, durationMs, errorCode } = event;
   write(JSON.stringify({ requestId, operation, status, durationMs, errorCode }));

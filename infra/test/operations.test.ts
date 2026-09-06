@@ -16,6 +16,35 @@ const synth = (phase: 'bootstrap' | 'ready' = 'ready') => {
 };
 
 describe('bounded disposable operations', () => {
+  it.each(['bootstrap', 'ready'] as const)('%s creates literal-named proxy logs before the proxy and deletes them after it', (phase) => {
+    const { template } = synth(phase);
+    const [proxyId, proxy] = Object.entries(template.findResources('AWS::RDS::DBProxy'))[0]!;
+    const expectedName = 'appointment-portal-portal123';
+    expect.soft(proxy.Properties.DBProxyName).toBe(expectedName);
+    const [logId, logs] = Object.entries(template.findResources('AWS::Logs::LogGroup')).find(([, resource]) =>
+      JSON.stringify(resource.Properties.LogGroupName).includes('/aws/rds/proxy/'))!;
+    expect.soft(logs.Properties.LogGroupName).toBe(`/aws/rds/proxy/${expectedName}`);
+    expect.soft(proxy.DependsOn ?? []).toContain(logId);
+    expect.soft(logs.DependsOn ?? []).not.toContain(proxyId);
+    expect.soft(JSON.stringify(logs)).not.toContain(proxyId);
+    // Template.fromStack also rejects dependency cycles during synthesis.
+  });
+
+  it('finds the S3 maintenance Lambda, role and log group in the project-tag inventory', () => {
+    const { template } = synth();
+    const functions = template.findResources('AWS::Lambda::Function');
+    const [functionId, fn] = Object.entries(functions).find(([, resource]) => !resource.Properties.VpcConfig)!;
+    const projectTag = { Key: 'Project', Value: 'appointment-portal' };
+    const inventory = Object.entries(template.toJSON().Resources).filter(([, resource]) => {
+      const tags = (resource as { Properties?: { Tags?: { Key: string; Value: string }[] } }).Properties?.Tags ?? [];
+      return Array.isArray(tags) && tags.some((tag) => tag.Key === projectTag.Key && tag.Value === projectTag.Value);
+    }).map(([id]) => id);
+    expect(inventory).toContain(functionId);
+    expect(inventory).toContain(fn.Properties.Role['Fn::GetAtt'][0]);
+    expect(inventory).toContain(fn.Properties.LoggingConfig.LogGroup.Ref);
+    expect(Object.keys(functions).every((id) => inventory.includes(id))).toBe(true);
+  });
+
   it('assigns named one-week log groups to every Lambda and API stage, plus the proxy', () => {
     const { template } = synth();
     const groups = Object.values(template.findResources('AWS::Logs::LogGroup'));

@@ -51,6 +51,7 @@ export class ApiConstruct extends Construct {
             afterBundling: (input, output) => [
               `mkdir -p ${shellQuote(join(output, 'certs'))}`,
               `cp ${shellQuote(join(input, 'infra/assets/rds-global-bundle.pem'))} ${shellQuote(join(output, 'certs/rds-global-bundle.pem'))}`,
+              `node ${shellQuote(join(input, 'infra/scripts/normalize-metafile.mjs'))} ${shellQuote(join(output, 'index.meta.json'))}`,
             ],
           },
         },

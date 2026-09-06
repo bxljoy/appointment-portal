@@ -9,6 +9,7 @@ export class DataConstruct extends Construct {
   readonly vpc: ec2.Vpc;
   readonly database: rds.DatabaseInstance;
   readonly proxy: rds.DatabaseProxy;
+  readonly proxyName: string;
   readonly adminSecret: secretsmanager.Secret;
   readonly applicationSecret: secretsmanager.Secret;
   readonly apiSecurityGroup: ec2.SecurityGroup;
@@ -58,7 +59,11 @@ export class DataConstruct extends Construct {
       removalPolicy: RemovalPolicy.DESTROY,
     });
 
+    // Keep the name independent of the resource Ref so operations can precreate
+    // its service log group. The validated qualifier keeps this a valid RDS name.
+    this.proxyName = `appointment-portal-${config.qualifier}`;
     this.proxy = new rds.DatabaseProxy(this, 'Proxy', {
+      dbProxyName: this.proxyName,
       vpc: this.vpc, vpcSubnets: isolated, securityGroups: [proxySecurityGroup],
       proxyTarget: rds.ProxyTarget.fromInstance(this.database),
       // Bootstrap must become healthy before the migration creates portal_app.

@@ -8,17 +8,20 @@ import type { DatabaseInstance, DatabaseProxy } from 'aws-cdk-lib/aws-rds';
 import { Construct } from 'constructs';
 import type { FeatureFunctions } from './api-construct.js';
 
-type OperationsProps = { functions: FeatureFunctions; httpApi: HttpApi; database: DatabaseInstance; proxy: DatabaseProxy };
+type OperationsProps = { functions: FeatureFunctions; httpApi: HttpApi; database: DatabaseInstance; proxy: DatabaseProxy; proxyName: string };
 
 export class OperationsConstruct extends Construct {
   readonly dashboard: Dashboard;
 
-  constructor(scope: Construct, id: string, { functions, httpApi, database, proxy }: OperationsProps) {
+  constructor(scope: Construct, id: string, { functions, httpApi, database, proxy, proxyName }: OperationsProps) {
     super(scope, id);
     const stack = Stack.of(this);
     // Generic CDK provider CfnResources do not participate in tag propagation.
     for (const resource of stack.node.findAll()) {
-      if (resource instanceof CfnResource && resource.cfnResourceType === 'AWS::IAM::Role' && !(resource instanceof CfnRole)) {
+      if (resource instanceof CfnResource && (
+        (resource.cfnResourceType === 'AWS::IAM::Role' && !(resource instanceof CfnRole)) ||
+        (resource.cfnResourceType === 'AWS::Lambda::Function' && !(resource instanceof CfnFunction))
+      )) {
         resource.addPropertyOverride('Tags', [{ Key: 'Project', Value: 'appointment-portal' }]);
       }
     }
@@ -33,10 +36,13 @@ export class OperationsConstruct extends Construct {
       alarm(`${feature}Throttles`, fn.metricThrottles({ period, statistic: 'Sum' }));
     }
     alarm('Api5xx', httpApi.metricServerError({ period, statistic: 'Sum' }));
-    new LogGroup(this, 'ProxyLogs', {
-      logGroupName: `/aws/rds/proxy/${proxy.dbProxyName}`,
+    const proxyLogs = new LogGroup(this, 'ProxyLogs', {
+      logGroupName: `/aws/rds/proxy/${proxyName}`,
       retention: RetentionDays.ONE_WEEK, removalPolicy: RemovalPolicy.DESTROY,
     });
+    // Create logs before RDS can create them implicitly; reverse deletion order
+    // leaves the group present until the proxy has finished shutting down.
+    proxy.node.addDependency(proxyLogs);
     // CDK's bucket emptying provider is a maintenance Lambda outside our three API
     // functions. Bind any such provider to an explicit group instead of letting
     // its first invocation create an unbounded, orphaned /aws/lambda group.

@@ -32,7 +32,7 @@ export class PortalStack extends Stack {
     this.web = new WebConstruct(this, 'Web', { apiUrl: this.api.apiUrl,
       cognitoDomain: this.identity.domain.baseUrl(), cognitoIssuerOrigin: `https://cognito-idp.${this.region}.${this.urlSuffix}` });
     this.operations = new OperationsConstruct(this, 'Operations', { functions: this.api.functions, httpApi: this.api.httpApi,
-      database: this.data.database, proxy: this.data.proxy });
+      database: this.data.database, proxy: this.data.proxy, proxyName: this.data.proxyName });
     const outputs = {
       FrontendUrl: this.web.frontendUrl, ApiUrl: this.api.apiUrl, DistributionId: this.web.distribution.distributionId,
       WebBucketName: this.web.bucket.bucketName, UserPoolId: this.identity.userPool.userPoolId,

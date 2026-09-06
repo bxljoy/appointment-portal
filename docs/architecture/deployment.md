@@ -107,6 +107,10 @@ five, the isolated subnets, and the API security group. Application-secret IAM
 access is unchanged between phases. AWS SDK clients are included in the ESM bundles;
 Node built-ins and pg's unused lazy `pg-native` alternative are the only externals.
 The RDS public CA asset and its provenance live in `infra/assets/`.
+CDK retains esbuild's analyzed input/import metadata in each artifact. Its bundling
+hook normalizes the sole output key to `index.mjs` before hashing, removing only the
+temporary synth-directory prefix. Identical code, CA files, and dependency inputs
+produce identical asset hashes across bootstrap and ready synth directories.
 
 All ten approved routes retain the `/api` prefix and explicitly require the Cognito
 issuer, app-client audience, and `portal/access` scope. There is no anonymous
@@ -155,18 +159,48 @@ permission. Review the style exception when that UI dependency changes.
 ## Operations and stable outputs
 
 API feature logs and access logs use named `/appointment-portal/<stack>/api/...`
-groups. The proxy group is `/aws/rds/proxy/<proxy-name>`. CDK's S3 emptying provider
+groups. The proxy has the physical name `appointment-portal-<qualifier>` in both
+phases. Its literal `/aws/rds/proxy/appointment-portal-<qualifier>` log group is an
+explicit dependency of the proxy: it is created first and deleted after the proxy,
+without depending on the proxy's Ref. CDK's S3 emptying provider
 also receives an explicit named maintenance log group. Every group retains one
 week and is deleted with the stack, including the maintenance group. The provider
-is a CDK lifecycle function, separate from the three application features.
+is a CDK lifecycle function, separate from the three application features. Its
+Lambda, role, and log group all carry `Project=appointment-portal` for inventory.
 
 The access log is one JSON object with gateway `requestId`, normalized `routeKey`,
 status, response length, integration latency, and response latency. The existing
 Lambda adapter carries `event.requestContext.requestId` into its completion log
-and response correlation header. API functions explicitly select Lambda's JSON
-logging format. Join the two log streams on the adapter's request ID. It logs
-operation, duration, status, and a safe error code; tokens, query strings, caller
-claims, request/response payloads, and database errors are excluded.
+and `X-Request-Id` response header. API functions explicitly select Lambda's JSON
+logging format. The adapter writes exactly one newline-terminated JSON object to
+stdout, bypassing the Node runtime's console wrapper so the gateway request ID and
+all five application fields remain at the top level:
+
+```json
+{"requestId":"gateway-request-id","operation":"GET /api/me","status":200,"durationMs":12,"errorCode":null}
+```
+
+`requestId` is the gateway correlation ID; it is distinct from the Lambda invocation
+ID in Lambda's own system records. Do not serialize this completion record through
+`console.log`: in JSON mode that places an escaped string inside `message` and uses
+the invocation ID in the wrapper. Tokens, query strings, caller claims,
+request/response payloads, and raw exceptions or database errors are excluded.
+
+Select the access group and the relevant feature groups in CloudWatch Logs Insights,
+then correlate the two streams with the returned gateway request ID:
+
+```text
+fields @timestamp, @log, requestId, operation, routeKey, status, durationMs, errorCode, integrationLatency, responseLatency
+| filter requestId = "gateway-request-id"
+| sort @timestamp asc
+```
+
+For completion counts and latency, filter out access and system records:
+
+```text
+filter ispresent(operation)
+| stats count(*) as requests, pct(durationMs, 95) as p95DurationMs by operation
+```
 
 Each feature has Errors and Throttles alarms; the API has a 5xx alarm. Each alarms
 on one or more events within one minute and treats missing data as nonbreaching.

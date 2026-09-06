@@ -31,6 +31,28 @@ const expectedRoutes: Record<string, string> = {
   'POST /api/appointments/{id}/cancel': 'appointments',
 };
 
+it('keeps identical feature artifacts at stable asset hashes across bootstrap and ready synth directories', () => {
+  const bootstrap = synth('bootstrap');
+  const ready = synth('ready');
+  expect(bootstrap.assemblyDirectory).not.toBe(ready.assemblyDirectory);
+  for (const feature of ['profiles', 'availability', 'appointments'] as const) {
+    const before = bootstrap.stack.api.functions[feature].node.findChild('Code') as Asset;
+    const after = ready.stack.api.functions[feature].node.findChild('Code') as Asset;
+    const beforeDirectory = join(bootstrap.assemblyDirectory, before.assetPath);
+    const afterDirectory = join(ready.assemblyDirectory, after.assetPath);
+    for (const path of ['index.mjs', 'certs/rds-global-bundle.pem']) {
+      expect(readFileSync(join(beforeDirectory, path))).toEqual(readFileSync(join(afterDirectory, path)));
+    }
+    const beforeMetadata = JSON.parse(readFileSync(join(beforeDirectory, 'index.meta.json'), 'utf8'));
+    const afterMetadata = JSON.parse(readFileSync(join(afterDirectory, 'index.meta.json'), 'utf8'));
+    expect(beforeMetadata.inputs).toEqual(afterMetadata.inputs);
+    expect(before.assetHash).toBe(after.assetHash);
+    expect(beforeMetadata).toEqual(afterMetadata);
+    expect(Object.keys(beforeMetadata.outputs)).toEqual(['index.mjs']);
+    expect(JSON.stringify(beforeMetadata)).not.toContain('bundling-temp-');
+  }
+});
+
 describe.each(['bootstrap', 'ready'] as const)('%s API trust boundary', (phase) => {
   it('maps exactly ten routes to three feature integrations and authorizes every direct-origin request', () => {
     const { template } = synth(phase);

@@ -21,6 +21,47 @@ const service = (getMe: ProfilesService['getMe']): ProfilesService => ({
 });
 
 describe('structured request completion logging', () => {
+  it.each([200, 500])('keeps the %i completion record and gateway correlation at the top level under Lambda JSON logging', async (status) => {
+    const cloudWatchLines: string[] = [];
+    // Model the relevant Node 24 RIC behavior: a single console argument becomes
+    // the JSON envelope's message value; an already serialized string stays a
+    // string. Direct stdout lines bypass that console envelope.
+    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+      cloudWatchLines.push(String(chunk));
+      return true;
+    });
+    const consoleLog = vi.spyOn(console, 'log').mockImplementation((message: unknown) => {
+      cloudWatchLines.push(`${JSON.stringify({ timestamp: '2030-01-01T00:00:00.000Z', level: 'INFO',
+        requestId: 'lambda-invocation-id', message })}\n`);
+    });
+    const handler = createLambdaHandler({
+      loadService: async () => service(async () => {
+        if (status === 500) throw new Error('SQL sentinel-password Bearer sentinel-token');
+        return me;
+      }),
+      route: handleProfiles,
+      now: vi.fn().mockReturnValueOnce(100).mockReturnValueOnce(112),
+    });
+    const event = lambdaEvent('GET /api/me', 'patient-sub');
+    event.headers.authorization = 'Bearer sentinel-token';
+    let response;
+    try {
+      response = await handler(event);
+    } finally {
+      stdout.mockRestore();
+      consoleLog.mockRestore();
+    }
+    expect(response.statusCode).toBe(status);
+    expect(cloudWatchLines).toHaveLength(1);
+    expect(cloudWatchLines[0]).toMatch(/\n$/);
+    expect(cloudWatchLines[0]!.trim().split('\n')).toHaveLength(1);
+    const record = JSON.parse(cloudWatchLines[0]!);
+    expect(record).toEqual({ requestId: 'request-1', operation: 'GET /api/me', status,
+      durationMs: 12, errorCode: status === 500 ? 'INTERNAL_ERROR' : null });
+    expect(record.requestId).toBe(response.headers['X-Request-Id']);
+    expect(cloudWatchLines[0]).not.toMatch(/sentinel-password|sentinel-token|patient-sub|lambda-invocation-id/);
+  });
+
   it('writes only the allowlisted completion fields', () => {
     const write = vi.fn();
     writeCompletionLog(
