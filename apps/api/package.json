@@ -5,10 +5,12 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "build:lambdas": "esbuild src/modules/profiles/handler.ts --bundle --platform=node --target=node24 --format=esm --banner:js=\"import { createRequire } from 'node:module';const require=createRequire(import.meta.url);\" --outfile=dist/lambda/profiles/index.mjs --metafile=dist/lambda/profiles.meta.json --analyze && esbuild src/modules/availability/handler.ts --bundle --platform=node --target=node24 --format=esm --banner:js=\"import { createRequire } from 'node:module';const require=createRequire(import.meta.url);\" --outfile=dist/lambda/availability/index.mjs --metafile=dist/lambda/availability.meta.json --analyze && esbuild src/modules/appointments/handler.ts --bundle --platform=node --target=node24 --format=esm --banner:js=\"import { createRequire } from 'node:module';const require=createRequire(import.meta.url);\" --outfile=dist/lambda/appointments/index.mjs --metafile=dist/lambda/appointments.meta.json --analyze",
+    "build:lambdas": "esbuild src/modules/profiles/handler.ts --bundle --platform=node --target=node24 --format=esm --banner:js=\"import { createRequire } from 'node:module';const require=createRequire(import.meta.url);\" --outfile=dist/lambda/profiles/index.mjs --metafile=dist/lambda/profiles.meta.json --analyze && esbuild src/modules/availability/handler.ts --bundle --platform=node --target=node24 --format=esm --banner:js=\"import { createRequire } from 'node:module';const require=createRequire(import.meta.url);\" --outfile=dist/lambda/availability/index.mjs --metafile=dist/lambda/availability.meta.json --analyze && esbuild src/modules/appointments/handler.ts --bundle --platform=node --target=node24 --format=esm --banner:js=\"import { createRequire } from 'node:module';const require=createRequire(import.meta.url);\" --outfile=dist/lambda/appointments/index.mjs --metafile=dist/lambda/appointments.meta.json --analyze && node scripts/check-lambda-artifacts.mjs",
     "build:lambda:profiles": "esbuild src/modules/profiles/handler.ts --bundle --platform=node --target=node24 --format=esm --banner:js=\"import { createRequire } from 'node:module';const require=createRequire(import.meta.url);\" --outfile=dist/lambda/profiles/index.mjs --metafile=dist/lambda/profiles.meta.json --analyze",
     "build:lambda:availability": "esbuild src/modules/availability/handler.ts --bundle --platform=node --target=node24 --format=esm --banner:js=\"import { createRequire } from 'node:module';const require=createRequire(import.meta.url);\" --outfile=dist/lambda/availability/index.mjs --metafile=dist/lambda/availability.meta.json --analyze",
     "build:lambda:appointments": "esbuild src/modules/appointments/handler.ts --bundle --platform=node --target=node24 --format=esm --banner:js=\"import { createRequire } from 'node:module';const require=createRequire(import.meta.url);\" --outfile=dist/lambda/appointments/index.mjs --metafile=dist/lambda/appointments.meta.json --analyze",
+    "check:lambda-artifacts": "node scripts/check-lambda-artifacts.mjs",
+    "dev:local": "tsx src/local/server.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run"
   },
@@ -21,6 +23,7 @@
   "devDependencies": {
     "@portal/database": "workspace:*",
     "@types/pg": "8.15.5",
-    "esbuild": "0.25.12"
+    "esbuild": "0.25.12",
+    "tsx": "4.20.6"
   }
 }

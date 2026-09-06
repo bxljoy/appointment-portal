@@ -63,8 +63,10 @@ const runCli = async (): Promise<void> => {
     await seedDemo(
       pool,
       [
-        { sub: 'demo-patient', displayName: 'Demo Patient', role: 'patient' },
-        { sub: 'demo-clinician', displayName: 'Demo Clinician', role: 'clinician' },
+        { sub: 'patient-a', displayName: 'Alice Patient', role: 'patient' },
+        { sub: 'patient-b', displayName: 'Bea Patient', role: 'patient' },
+        { sub: 'clinician-a', displayName: 'Casey Clinician', role: 'clinician' },
+        { sub: 'clinician-b', displayName: 'Devon Clinician', role: 'clinician' },
       ],
       new Date(),
     );

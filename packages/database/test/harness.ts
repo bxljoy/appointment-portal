@@ -69,10 +69,10 @@ export const seedScenario = async (
   slot: Slot;
 }> => {
   const users = [
-    { sub: 'patient', displayName: 'Patient', role: 'patient' as const },
-    { sub: 'second-patient', displayName: 'Second Patient', role: 'patient' as const },
-    { sub: 'clinician', displayName: 'Clinician', role: 'clinician' as const },
-    { sub: 'other-clinician', displayName: 'Other Clinician', role: 'clinician' as const },
+    { sub: 'patient-a', displayName: 'Alice Patient', role: 'patient' as const },
+    { sub: 'patient-b', displayName: 'Bea Patient', role: 'patient' as const },
+    { sub: 'clinician-a', displayName: 'Casey Clinician', role: 'clinician' as const },
+    { sub: 'clinician-b', displayName: 'Devon Clinician', role: 'clinician' as const },
   ];
   await seedDemo(pool, users, new Date('2030-06-01T09:00:00.000Z'));
   const result = await pool.query<{ id: string; cognito_sub: string }>(
@@ -92,13 +92,13 @@ export const seedScenario = async (
      WHERE clinician_id = $1
      ORDER BY start_at
      LIMIT 1`,
-    [bySub.get('clinician')?.id],
+    [bySub.get('clinician-a')?.id],
   );
   const slot = slotResult.rows[0];
-  const patient = bySub.get('patient');
-  const secondPatient = bySub.get('second-patient');
-  const clinician = bySub.get('clinician');
-  const otherClinician = bySub.get('other-clinician');
+  const patient = bySub.get('patient-a');
+  const secondPatient = bySub.get('patient-b');
+  const clinician = bySub.get('clinician-a');
+  const otherClinician = bySub.get('clinician-b');
   if (!slot || !patient || !secondPatient || !clinician || !otherClinician) {
     throw new Error('Seed scenario was incomplete');
   }

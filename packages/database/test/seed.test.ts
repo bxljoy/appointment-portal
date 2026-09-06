@@ -32,7 +32,7 @@ test('provides actors and a fixed slot for service integration tests', async () 
   await withTestDb(async (pool) => {
     const scenario = await seedScenario(pool);
 
-    expect(scenario.patient.sub).toBe('patient');
+    expect(scenario.patient.sub).toBe('patient-a');
     expect(scenario.secondPatient.id).not.toBe(scenario.patient.id);
     expect(scenario.slot).toMatchObject({
       clinicianId: scenario.clinician.id,

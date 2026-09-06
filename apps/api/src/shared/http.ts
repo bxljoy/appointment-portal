@@ -125,9 +125,9 @@ export const createLambdaHandler = <Service>({
   let response: HttpResponse;
 
   try {
-    const body = readBody(event);
+    const body = parseJsonBody(event.body, event.headers, event.isBase64Encoded);
     const actor = readActor(event);
-    const query = readQuery(event);
+    const query = parseQuery(event.rawQueryString);
     const service = await loadService();
     response = await route({
       method: event.requestContext.http.method.toUpperCase(),
@@ -156,17 +156,21 @@ export const createLambdaHandler = <Service>({
   return response;
 };
 
-const readBody = (event: HttpApiEvent): unknown => {
-  if (event.body === undefined) return undefined;
+export const parseJsonBody = (
+  body: string | Uint8Array | undefined,
+  headers: Record<string, string | undefined>,
+  isBase64Encoded = false,
+): unknown => {
+  if (body === undefined) return undefined;
 
-  const bytes = event.isBase64Encoded
-    ? Buffer.from(event.body, 'base64')
-    : Buffer.from(event.body, 'utf8');
+  const bytes = typeof body === 'string'
+    ? (isBase64Encoded ? Buffer.from(body, 'base64') : Buffer.from(body, 'utf8'))
+    : Buffer.from(body);
   if (bytes.byteLength > MAX_BODY_BYTES) {
     throw new AppError(413, 'PAYLOAD_TOO_LARGE', 'The request body is too large.');
   }
 
-  const contentType = header(event.headers, 'content-type')?.split(';', 1)[0]?.trim().toLowerCase();
+  const contentType = header(headers, 'content-type')?.split(';', 1)[0]?.trim().toLowerCase();
   if (contentType !== 'application/json' && !contentType?.endsWith('+json')) {
     throw new AppError(400, 'VALIDATION_ERROR', 'The request body must be JSON.', {
       body: ['Content-Type must be application/json.'],
@@ -182,9 +186,10 @@ const readBody = (event: HttpApiEvent): unknown => {
   }
 };
 
-const readQuery = (event: HttpApiEvent): Record<string, string> => {
+export const parseQuery = (rawQueryString: string): Record<string, string> => {
   const seen = new Set<string>();
-  for (const [key] of new URLSearchParams(event.rawQueryString)) {
+  const query = new URLSearchParams(rawQueryString);
+  for (const [key] of query) {
     if (seen.has(key)) {
       throw new AppError(400, 'VALIDATION_ERROR', 'The request query is invalid.', {
         [key]: ['Query parameters must not be repeated.'],
@@ -192,7 +197,7 @@ const readQuery = (event: HttpApiEvent): Record<string, string> => {
     }
     seen.add(key);
   }
-  return { ...event.queryStringParameters };
+  return Object.fromEntries(query);
 };
 
 const header = (headers: Record<string, string | undefined>, name: string): string | undefined => {

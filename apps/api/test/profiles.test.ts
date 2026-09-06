@@ -41,7 +41,7 @@ test('paginates the clinician directory and returns a safe 404 for absent clinic
     expect(firstPage.items).toEqual([
       {
         id: scenario.clinician.id,
-        displayName: 'Clinician',
+        displayName: 'Casey Clinician',
         biography: 'Demo clinician',
         specialty: 'General medicine',
         timezone: 'Europe/Stockholm',
@@ -56,7 +56,7 @@ test('paginates the clinician directory and returns a safe 404 for absent clinic
     expect(secondPage.items).toEqual([
       {
         id: scenario.otherClinician.id,
-        displayName: 'Other Clinician',
+        displayName: 'Devon Clinician',
         biography: 'Demo clinician',
         specialty: 'General medicine',
         timezone: 'Europe/Stockholm',
