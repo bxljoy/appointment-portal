@@ -159,6 +159,48 @@ describe('availability HTTP routes', () => {
     expect(service.withdraw).toHaveBeenCalledWith(actor, slotId);
   });
 
+  it('uses a trusted seven-day clock window when availability bounds are both omitted', async () => {
+    const service = availabilityService();
+    const clock = () => new Date('2030-06-01T12:34:56.789Z');
+
+    const publicResponse = await handleAvailability(
+      request('GET', `/api/clinicians/${clinicianId}/slots`, { query: { limit: '5' } }),
+      service,
+      clock,
+    );
+    const ownResponse = await handleAvailability(
+      request('GET', '/api/availability', { query: { cursor: 'cursor-value' } }),
+      service,
+      clock,
+    );
+    const partialPublicResponse = await handleAvailability(
+      request('GET', `/api/clinicians/${clinicianId}/slots`, { query: { from: '2030-06-01T00:00:00Z' } }),
+      service,
+      clock,
+    );
+    const partialOwnResponse = await handleAvailability(
+      request('GET', '/api/availability', { query: { to: '2030-06-08T00:00:00Z' } }),
+      service,
+      clock,
+    );
+
+    expect(publicResponse.statusCode).toBe(200);
+    expect(ownResponse.statusCode).toBe(200);
+    expect(partialPublicResponse.statusCode).toBe(400);
+    expect(partialOwnResponse.statusCode).toBe(400);
+    expect(service.listPublic).toHaveBeenCalledWith(actor, clinicianId, {
+      from: '2030-06-01T12:34:56.789Z',
+      to: '2030-06-08T12:34:56.789Z',
+      limit: 5,
+    });
+    expect(service.listOwn).toHaveBeenCalledWith(actor, {
+      from: '2030-06-01T12:34:56.789Z',
+      to: '2030-06-08T12:34:56.789Z',
+      limit: 20,
+      cursor: 'cursor-value',
+    });
+  });
+
   it('rejects invalid windows, IDs, bodies, query keys, and role injection', async () => {
     const service = availabilityService();
     const badWindow = await handleAvailability(
@@ -355,6 +397,25 @@ describe('shared HTTP response and Lambda event adapter', () => {
     expect(response.statusCode).toBe(400);
     expect(json(response)).toMatchObject({ error: { fieldErrors: { limit: expect.any(Array) } } });
     expect(loadService).not.toHaveBeenCalled();
+  });
+
+  it('returns validation errors for prototype-named unknown body and query fields', async () => {
+    const bodyLoader = vi.fn(async () => appointmentsService());
+    const bodyHandler = createLambdaHandler({ loadService: bodyLoader, route: handleAppointments, writeLog: () => undefined });
+    const bodyEvent = lambdaEvent('POST /api/appointments', actor.sub, { slotId, constructor: 'forged' });
+    const queryLoader = vi.fn(async () => profilesService());
+    const queryHandler = createLambdaHandler({ loadService: queryLoader, route: handleProfiles, writeLog: () => undefined });
+    const queryEvent = lambdaEvent('GET /api/clinicians?toString=forged', actor.sub);
+
+    const bodyResponse = await bodyHandler(bodyEvent);
+    const queryResponse = await queryHandler(queryEvent);
+
+    expect(bodyResponse.statusCode).toBe(400);
+    expect(json(bodyResponse)).toMatchObject({ error: { code: 'VALIDATION_ERROR', fieldErrors: { constructor: expect.any(Array) } } });
+    expect(queryResponse.statusCode).toBe(400);
+    expect(json(queryResponse)).toMatchObject({ error: { code: 'VALIDATION_ERROR', fieldErrors: { toString: expect.any(Array) } } });
+    expect(bodyLoader).toHaveBeenCalledTimes(1);
+    expect(queryLoader).toHaveBeenCalledTimes(1);
   });
 });
 

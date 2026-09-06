@@ -70,7 +70,7 @@ export const validate = <T>(schema: z.ZodType<T>, value: unknown, rootField = 'r
   const parsed = schema.safeParse(value);
   if (parsed.success) return parsed.data;
 
-  const fieldErrors: Record<string, string[]> = {};
+  const fieldErrors: Record<string, string[]> = Object.create(null) as Record<string, string[]>;
   for (const issue of parsed.error.issues) {
     const fields = issue.code === 'unrecognized_keys'
       ? issue.keys
