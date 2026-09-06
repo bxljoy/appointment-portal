@@ -1,4 +1,4 @@
-import { screen } from '@testing-library/react';
+import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Appointment, Slot } from '@portal/contracts';
 
@@ -62,6 +62,8 @@ describe('clinician scheduling journeys', () => {
     const checkbox = screen.getByRole('checkbox', { name: 'Withdraw this slot too' });
     expect(checkbox).not.toBeChecked();
     await portal.user.click(checkbox);
+    expect(screen.getByText(/it will no longer be available to book/i)).toBeInTheDocument();
+    expect(screen.queryByText(/become available to book again/i)).not.toBeInTheDocument();
     await portal.user.click(screen.getByRole('button', { name: 'Confirm cancellation' }));
     await screen.findByText('Cancelled');
     expect(cancelBody).toEqual({ withdrawSlot: true });
@@ -84,6 +86,95 @@ describe('clinician scheduling journeys', () => {
     expect(screen.getByText('Open — booked')).toBeInTheDocument();
     expect(screen.getByText('Withdrawn')).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: 'Withdraw slot' })).toHaveLength(1);
+  });
+
+  it('requests an explicit profile-timezone week and keeps far-future availability manageable across pages', async () => {
+    const first = { ...slot, id: '10000000-0000-4000-8000-000000000024', startAt: '2030-02-09T09:00:00Z', endAt: '2030-02-09T09:30:00Z' };
+    const second = { ...slot, id: '10000000-0000-4000-8000-000000000025', startAt: '2030-02-10T09:00:00Z', endAt: '2030-02-10T09:30:00Z' };
+    const requested: URL[] = [];
+    let resolveNextPage: ((value: Response) => void) | undefined;
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), 'https://portal.test');
+      if (url.pathname === '/api/me') return Promise.resolve(response(clinician));
+      if (url.pathname === `/api/clinicians/${ids.clinician}`) return Promise.resolve(response(clinicianProfile));
+      if (url.pathname === '/api/availability' && !init?.method) {
+        requested.push(url);
+        if (url.searchParams.get('from') === '2030-02-07T23:00:00Z' && url.searchParams.get('cursor') === 'next-page') {
+          return new Promise<Response>((resolve) => { resolveNextPage = resolve; });
+        }
+        if (url.searchParams.get('from') === '2030-02-07T23:00:00Z') return Promise.resolve(response({ items: [first], nextCursor: 'next-page' }));
+        return Promise.resolve(response({ items: [], nextCursor: null }));
+      }
+      throw new Error(`Unexpected request ${url.pathname}`);
+    }));
+    const portal = renderPortalPage(<AppRoutes />, { initialEntry: '/clinician/availability', sub: 'clinician-sub' });
+
+    const week = await screen.findByLabelText('Availability week starting');
+    fireEvent.change(week, { target: { value: '2030-02-08' } });
+    expect(await screen.findByText(/Sat, 9 Feb 2030/)).toBeInTheDocument();
+    await waitFor(() => expect(requested.some((url) => url.searchParams.get('from') === '2030-02-07T23:00:00Z' && url.searchParams.get('to') === '2030-02-14T23:00:00Z')).toBe(true));
+    const loadMore = screen.getByRole('button', { name: 'Load more availability' });
+    await portal.user.click(loadMore);
+    expect(loadMore).toBeDisabled();
+    expect(screen.getByText(/Sat, 9 Feb 2030/)).toBeInTheDocument();
+    resolveNextPage?.(response({ items: [second], nextCursor: null }));
+    expect(await screen.findByText(/Sun, 10 Feb 2030/)).toBeInTheDocument();
+  });
+
+  it('accumulates clinician appointments while loading the next page', async () => {
+    const anotherAppointment = { ...appointment, id: '10000000-0000-4000-8000-000000000031', slotId: '10000000-0000-4000-8000-000000000026', patientDisplayName: 'Bea Kim', startAt: '2030-01-16T09:00:00Z', endAt: '2030-01-16T09:30:00Z' };
+    let firstPage = appointment;
+    let resolveNextPage: ((value: Response) => void) | undefined;
+    let loadingNextPage = true;
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), 'https://portal.test');
+      if (url.pathname === '/api/me') return Promise.resolve(response(clinician));
+      if (url.pathname === `/api/clinicians/${ids.clinician}`) return Promise.resolve(response(clinicianProfile));
+      if (url.pathname === '/api/appointments' && !init?.method) {
+        if (url.searchParams.get('cursor') === 'next-page' && loadingNextPage) return new Promise<Response>((resolve) => { resolveNextPage = resolve; });
+        if (url.searchParams.get('cursor') === 'next-page') return Promise.resolve(response({ items: [anotherAppointment], nextCursor: null }));
+        return Promise.resolve(response({ items: [firstPage], nextCursor: 'next-page' }));
+      }
+      if (url.pathname === `/api/appointments/${ids.appointment}/cancel`) {
+        firstPage = { ...appointment, status: 'cancelled', cancelledAt: '2029-01-01T00:00:00Z', cancelledBy: ids.clinician };
+        return Promise.resolve(response(firstPage));
+      }
+      throw new Error(`Unexpected request ${url.pathname}`);
+    }));
+    const portal = renderPortalPage(<AppRoutes />, { initialEntry: '/clinician/appointments', sub: 'clinician-sub' });
+
+    expect(await screen.findByText('Pat Lee')).toBeInTheDocument();
+    const loadMore = screen.getByRole('button', { name: 'Load more appointments' });
+    await portal.user.click(loadMore);
+    expect(loadMore).toBeDisabled();
+    expect(screen.getByText('Pat Lee')).toBeInTheDocument();
+    loadingNextPage = false;
+    resolveNextPage?.(response({ items: [anotherAppointment], nextCursor: null }));
+    expect(await screen.findByText('Bea Kim')).toBeInTheDocument();
+    expect(screen.getByText('Pat Lee')).toBeInTheDocument();
+    await portal.user.click(screen.getByRole('button', { name: 'Cancel appointment with Pat Lee' }));
+    await portal.user.click(screen.getByRole('button', { name: 'Confirm cancellation' }));
+    expect(await screen.findByText('Cancelled')).toBeInTheDocument();
+    expect(screen.getByText('Bea Kim')).toBeInTheDocument();
+  });
+
+  it('explains an overlapping slot without losing the entered time or reporting success', async () => {
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), 'https://portal.test');
+      if (url.pathname === '/api/me') return Promise.resolve(response(clinician));
+      if (url.pathname === `/api/clinicians/${ids.clinician}`) return Promise.resolve(response(clinicianProfile));
+      if (url.pathname === '/api/availability' && !init?.method) return Promise.resolve(response({ items: [], nextCursor: null }));
+      if (url.pathname === '/api/availability' && init?.method === 'POST') return Promise.resolve(response({ error: { code: 'SLOT_OVERLAP', message: 'This slot overlaps an existing availability entry.', requestId: 'request-overlap' } }, 409));
+      throw new Error(`Unexpected request ${url.pathname}`);
+    }));
+    const portal = renderPortalPage(<AppRoutes />, { initialEntry: '/clinician/availability', sub: 'clinician-sub' });
+
+    const start = await screen.findByLabelText('Start time');
+    await portal.user.type(start, '2030-01-15T10:00');
+    await portal.user.click(screen.getByRole('button', { name: 'Publish slot' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('This slot overlaps an existing availability entry.');
+    expect(start).toHaveValue('2030-01-15T10:00');
+    expect(screen.queryByText('Slot published')).not.toBeInTheDocument();
   });
 
   it('rejects patient access to clinician routes before clinician data requests', async () => {

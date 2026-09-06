@@ -31,7 +31,7 @@ export function CancelDialog({ appointment, onCancelled, onRestoreFocus, clinici
       onRestoreFocus();
     }}>
       <DialogTitle>Cancel appointment</DialogTitle>
-      <DialogDescription id="cancel-description">Cancel your appointment with {person}? The time will become available to book again.</DialogDescription>
+      <DialogDescription id="cancel-description">{clinician && withdrawSlot ? `Cancel your appointment with ${person} and withdraw this slot? It will no longer be available to book.` : `Cancel your appointment with ${person}? The time will become available to book again.`}</DialogDescription>
       {clinician && <label className="mt-4 flex min-h-11 items-center gap-3 text-sm"><input type="checkbox" checked={withdrawSlot} onChange={(event) => setWithdrawSlot(event.target.checked)} disabled={cancellation.isPending} />Withdraw this slot too</label>}
       {cancellation.isError && <p role="alert" className="error-message">{cancellation.error instanceof Error ? cancellation.error.message : 'We could not cancel this appointment.'}</p>}
       <div className="mt-6 flex flex-wrap gap-3"><Button variant="destructive" aria-label="Confirm cancellation" onClick={() => void cancel()} disabled={cancellation.isPending}>{cancellation.isPending ? 'Cancelling…' : 'Confirm cancellation'}</Button><Button variant="outline" onClick={() => setOpen(false)} disabled={cancellation.isPending}>Keep appointment</Button></div>

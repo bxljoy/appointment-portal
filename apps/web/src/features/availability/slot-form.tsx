@@ -4,11 +4,13 @@ import { useForm } from 'react-hook-form';
 
 import { Button } from '../../components/ui/button';
 import { formatAppointmentTime, localMinuteToInstant } from '../../lib/time';
+import type { Slot } from '@portal/contracts';
+
 import { useCreateSlot } from './queries';
 
 type SlotFormValues = { startAt: string };
 
-export function SlotForm({ timezone }: { timezone: string }) {
+export function SlotForm({ timezone, onCreated }: { timezone: string; onCreated?(slot: Slot): void }) {
   const form = useForm<SlotFormValues>({ defaultValues: { startAt: '' } });
   const creation = useCreateSlot();
   const [message, setMessage] = useState<string>();
@@ -31,7 +33,8 @@ export function SlotForm({ timezone }: { timezone: string }) {
       return;
     }
     try {
-      await creation.mutateAsync({ startAt });
+      const created = await creation.mutateAsync({ startAt });
+      onCreated?.(created);
       form.reset();
       setMessage('Slot published');
     } catch (error) {

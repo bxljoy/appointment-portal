@@ -1,19 +1,23 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { PageSchema, SlotSchema, type CreateSlotInput } from '@portal/contracts';
+import { PageSchema, SlotSchema, type CreateSlotInput, type WindowQuery } from '@portal/contracts';
 
 import { useApiClient, useSession } from '../auth/auth-provider';
 
 const SlotPageSchema = PageSchema(SlotSchema);
 
-export function useOwnSlots(cursor?: string) {
+export function useOwnSlots(window: WindowQuery | undefined) {
   const api = useApiClient();
   const { sub } = useSession();
-  const query = new URLSearchParams({ limit: '100' });
-  if (cursor) query.set('cursor', cursor);
+  const query = window && new URLSearchParams({
+    from: window.from,
+    to: window.to,
+    limit: String(window.limit),
+    ...(window.cursor ? { cursor: window.cursor } : {}),
+  });
   return useQuery({
-    queryKey: [sub, 'availability', cursor ?? 'first'],
+    queryKey: [sub, 'availability', window?.from, window?.to, window?.cursor ?? 'first'],
     queryFn: ({ signal }) => api(`/availability?${query}`, { signal }, SlotPageSchema),
-    enabled: Boolean(sub),
+    enabled: Boolean(sub && window && query),
   });
 }
 
@@ -24,7 +28,12 @@ export function useCreateSlot() {
   return useMutation({
     mutationKey: [sub, 'availability', 'create'],
     mutationFn: (input: CreateSlotInput) => api('/availability', { method: 'POST', body: JSON.stringify(input) }, SlotSchema),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: [sub, 'availability'] }),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: [sub, 'availability'] }),
+        queryClient.invalidateQueries({ queryKey: [sub, 'slots'] }),
+      ]);
+    },
   });
 }
 
