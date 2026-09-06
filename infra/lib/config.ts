@@ -12,7 +12,7 @@ const portalConfigSchema = z.strictObject({
   postgresVersion: z.string().regex(/^17\.[1-9]\d*$/),
   phase: z.enum(['bootstrap', 'ready']),
   frontendUrl: frontendOrigin.optional(),
-  qualifier: z.string().regex(/^[A-Za-z0-9]{1,10}$/),
+  qualifier: z.string().regex(/^[a-z0-9]{1,10}$/),
 }).refine((config) => config.phase !== 'ready' || config.frontendUrl !== undefined, {
   path: ['frontendUrl'], message: 'ready phase requires frontendUrl',
 });

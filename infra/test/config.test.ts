@@ -15,6 +15,10 @@ describe('deployment configuration', () => {
     expect(parsePortalConfig(ready)).toEqual(ready);
   });
 
+  it('rejects uppercase qualifiers that would create an invalid bootstrap S3 bucket name', () => {
+    expect(() => parsePortalConfig({ ...valid, qualifier: 'Portal123' })).toThrow();
+  });
+
   it.each([
     null, [], {}, { ...valid, extra: true },
     ...['account', 'region', 'postgresVersion', 'phase', 'qualifier'].map((key) => ({ ...valid, [key]: undefined })),

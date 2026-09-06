@@ -8,7 +8,9 @@ are added by subsequent implementation tasks. No deployment is performed by test
 
 `PortalConfig` validates a concrete 12-digit account, AWS region name, explicit
 PostgreSQL 17 minor version, `bootstrap` or `ready` phase, and a 1–10 character
-alphanumeric CDK bootstrap qualifier. The stack environment must match that account
+lowercase alphanumeric CDK bootstrap qualifier. Uppercase is rejected because the
+synthesizer includes the qualifier in its S3 asset bucket name. Use lowercase
+context such as `-c qualifier=portal123`. The stack environment must match that account
 and region. `ready` requires `frontendUrl`, a public HTTPS origin without a trailing
 slash, path, credentials, query, or fragment. The default deployment region in the
 approved design is `eu-north-1`; actual engine support remains a preflight check.
