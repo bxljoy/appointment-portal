@@ -8,6 +8,8 @@ export const appErrorCodes = [
   'SLOT_UNAVAILABLE',
   'SLOT_OVERLAP',
   'APPOINTMENT_STARTED',
+  'METHOD_NOT_ALLOWED',
+  'PAYLOAD_TOO_LARGE',
   'INTERNAL_ERROR',
 ] as const;
 

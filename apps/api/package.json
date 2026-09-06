@@ -5,15 +5,22 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "build:lambdas": "esbuild src/modules/profiles/handler.ts --bundle --platform=node --target=node24 --format=esm --banner:js=\"import { createRequire } from 'node:module';const require=createRequire(import.meta.url);\" --outfile=dist/lambda/profiles/index.mjs --metafile=dist/lambda/profiles.meta.json --analyze && esbuild src/modules/availability/handler.ts --bundle --platform=node --target=node24 --format=esm --banner:js=\"import { createRequire } from 'node:module';const require=createRequire(import.meta.url);\" --outfile=dist/lambda/availability/index.mjs --metafile=dist/lambda/availability.meta.json --analyze && esbuild src/modules/appointments/handler.ts --bundle --platform=node --target=node24 --format=esm --banner:js=\"import { createRequire } from 'node:module';const require=createRequire(import.meta.url);\" --outfile=dist/lambda/appointments/index.mjs --metafile=dist/lambda/appointments.meta.json --analyze",
+    "build:lambda:profiles": "esbuild src/modules/profiles/handler.ts --bundle --platform=node --target=node24 --format=esm --banner:js=\"import { createRequire } from 'node:module';const require=createRequire(import.meta.url);\" --outfile=dist/lambda/profiles/index.mjs --metafile=dist/lambda/profiles.meta.json --analyze",
+    "build:lambda:availability": "esbuild src/modules/availability/handler.ts --bundle --platform=node --target=node24 --format=esm --banner:js=\"import { createRequire } from 'node:module';const require=createRequire(import.meta.url);\" --outfile=dist/lambda/availability/index.mjs --metafile=dist/lambda/availability.meta.json --analyze",
+    "build:lambda:appointments": "esbuild src/modules/appointments/handler.ts --bundle --platform=node --target=node24 --format=esm --banner:js=\"import { createRequire } from 'node:module';const require=createRequire(import.meta.url);\" --outfile=dist/lambda/appointments/index.mjs --metafile=dist/lambda/appointments.meta.json --analyze",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run"
   },
   "dependencies": {
+    "@aws-sdk/client-secrets-manager": "3.1127.0",
     "@portal/contracts": "workspace:*",
-    "pg": "8.16.3"
+    "pg": "8.16.3",
+    "zod": "4.1.12"
   },
   "devDependencies": {
     "@portal/database": "workspace:*",
-    "@types/pg": "8.15.5"
+    "@types/pg": "8.15.5",
+    "esbuild": "0.25.12"
   }
 }
