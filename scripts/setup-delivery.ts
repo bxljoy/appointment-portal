@@ -55,6 +55,8 @@ export const setupDelivery = async (configPath: string, dependencies: SetupDeliv
   const toolkit = await stack(cloudformation, TOOLKIT_STACK);
   if (toolkit && !owned(toolkit)) throw new Error(`Refusing to adopt unowned stack ${TOOLKIT_STACK}.`);
   if (!toolkit) {
+    recovery = { ...recovery, resources: recovery.resources.filter((resource) => !resource.type.startsWith('Bootstrap::')) };
+    await saveManifest(recovery);
     await runner('pnpm', ['--filter', '@portal/infra', 'exec', 'cdk', 'bootstrap', `aws://${config.account}/${config.region}`,
       '--stack-name', TOOLKIT_STACK, '--qualifier', QUALIFIER, '--tags', `Project=${PROJECT_TAG}`]);
     await saveManifest(recovery);

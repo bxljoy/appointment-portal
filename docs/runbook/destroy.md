@@ -23,6 +23,9 @@ and tagged toolkit ECR/SSM assets. CloudWatch tag checks use each log group's ca
 to recorded disposable secrets. Secret values are never read or logged.
 
 Verification exits nonzero for active owned leftovers and unverified blockers.
+Stack membership records and richer service records are merged by normalized service
+type plus ID/ARN aliases before recovery, so a retained blocker is deleted and waited
+for once. Any shared ownership evidence remains a ceiling during that merge.
 Outputs identify candidates but do not authorize deletion without exact stack
 membership or the live project tag. Interface ENIs remain report-only: cleanup
 deletes their owning proxy or VPC endpoint and verifies that the ENI disappears.

@@ -3,7 +3,8 @@ import { parse } from 'yaml';
 import { describe, expect, it } from 'vitest';
 
 type Workflow = { on: { workflow_dispatch: unknown }; permissions: Record<string, string>;
-  concurrency: Record<string, unknown>; jobs: Record<string, { environment: string; 'timeout-minutes': number }> };
+  concurrency: Record<string, unknown>; jobs: Record<string, { environment: string; 'timeout-minutes': number;
+    steps: { id?: string; name?: string; if?: string; run?: string; uses?: string; with?: { path?: string } }[] }> };
 const workflow = async (name: string) => parse(await readFile(new URL(`../../.github/workflows/${name}.yml`, import.meta.url), 'utf8')) as Workflow;
 
 describe('manual disposable environment workflows', () => {
@@ -35,6 +36,19 @@ describe('manual disposable environment workflows', () => {
     const text = JSON.stringify(await workflow('demo'));
     expect(text).toContain('playwright install --with-deps chromium');
     expect(text.indexOf('playwright install --with-deps chromium')).toBeLessThan(text.indexOf('pnpm demo:deploy'));
+  });
+
+  it('uploads failure diagnostics only after their artifact scan succeeds', async () => {
+    const value = await workflow('demo');
+    const steps = value.jobs['deploy-and-verify']!.steps;
+    const scan = steps.find((step) => step.run?.includes('pnpm demo:diagnostics'))!;
+    const diagnosticUpload = steps.find((step) => step.uses?.includes('upload-artifact') && step.with?.path?.includes('diagnostics.json'))!;
+    expect(scan.id).toBeTruthy();
+    expect(scan.run).toContain('pnpm check:artifacts -- .runtime/diagnostics.json');
+    expect(diagnosticUpload.if).toContain(`steps.${scan.id}.outcome == 'success'`);
+    expect(diagnosticUpload.if).toContain('failure()');
+    const unconditionalUpload = steps.find((step) => step.uses?.includes('upload-artifact') && step.if === 'always()');
+    expect(unconditionalUpload?.with?.path).not.toContain('diagnostics.json');
   });
 
   it('restores an explicit manifest and dry-runs before deleting', async () => {

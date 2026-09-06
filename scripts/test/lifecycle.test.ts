@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { estimateCost, publishFrontend, runDemo, type DemoDependencies } from '../deploy.js';
 import { runPreflight } from '../preflight.js';
 import { DEPLOYMENT_PATH, loadDeploymentManifest, parseDeploymentManifest } from '../lifecycle-types.js';
@@ -74,6 +74,31 @@ describe('disposable deployment lifecycle', () => {
     })).rejects.toThrow(/concurrency/i);
   });
 
+  it('passes only the preflight input contract from the full AWS demo configuration', async () => {
+    const root = await mkdtemp(join(await realpath(tmpdir()), 'portal-adapter-preflight-'));
+    const priceReport = join(root, 'prices.json');
+    try {
+      await writeFile(priceReport, JSON.stringify({ checkedAt: new Date().toISOString(), region: manifest.region, currency: 'USD',
+        sources: ['https://aws.amazon.com/rds/pricing/', 'https://aws.amazon.com/rds/proxy/pricing/'], assumptions: 'Disposable adapter preflight price fixture.',
+        rates: { databaseHourly: 0, proxyVcpuHourly: 0, databaseVcpus: 2, interfaceEndpointAzHourly: 0, azCount: 2,
+          cognito: 0, logging: 0, storage: 0, transfer: 0 } }), { mode: 0o600 });
+      const clients = fakeAwsClients({
+        DescribeDBEngineVersionsCommand: [{ DBEngineVersions: [{}] }],
+        DescribeOrderableDBInstanceOptionsCommand: [{ OrderableDBInstanceOptions: [{}] }],
+        DescribeDBProxiesCommand: [{ DBProxies: [] }], GetAccountSettingsCommand: [{ AccountLimit: { UnreservedConcurrentExecutions: 116 } }],
+      });
+      const runtime = makeAwsDemoDependencies({ account: manifest.account, region: manifest.region, postgresVersion: '17.6', durationHours: 1,
+        maxCostUsd: 1, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), accountsFile: '/unused', priceReport }, clients,
+      async (executable, args) => {
+        if (executable === process.execPath) return { stdout: 'v24.0.1\n', stderr: '' };
+        if (executable === 'pnpm' && args[0] === '--version') return { stdout: '11.22.0\n', stderr: '' };
+        if (executable === 'docker') return { stdout: 'Docker version 28.0.0\n', stderr: '' };
+        return { stdout: '', stderr: '' };
+      });
+      await expect(runtime.preflight()).resolves.toBeUndefined();
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
   it('runs a new deployment in two phases and persists both successful phases', async () => {
     const fake = deps();
     await runDemo(fake);
@@ -121,6 +146,43 @@ describe('disposable deployment lifecycle', () => {
     await runDemo(fake);
     expect(fake.events.indexOf('deploy:bootstrap')).toBeGreaterThan(-1);
     expect(fake.events.indexOf('deploy:bootstrap')).toBeLessThan(fake.events.indexOf('migrate'));
+  });
+
+  it('does not reuse deleted outputs after a partial replacement of an absent saved bootstrap stack', async () => {
+    const stale = { ...manifest, phase: 'bootstrap' as const, outputs: {
+      ...manifest.outputs, MigrationFunctionName: 'deleted-function', UserPoolId: 'deleted-pool', ProxyName: 'deleted-proxy',
+    } };
+    let saved: typeof stale | typeof manifest = stale;
+    const clients = fakeAwsClients();
+    let stackInspection = 0;
+    const baseSend = clients.cloudformation.send.bind(clients.cloudformation);
+    clients.cloudformation.send = (async (command: object) => {
+      if (command.constructor.name === 'DescribeStacksCommand') {
+        stackInspection += 1;
+        if (stackInspection === 1) throw Object.assign(new Error('absent'), { name: 'ValidationError' });
+        if (stackInspection === 2) return { Stacks: [{ Tags: [{ Key: 'Project', Value: manifest.projectTag }] }] };
+        return { Stacks: [{ Tags: [{ Key: 'Project', Value: manifest.projectTag }, { Key: 'SourceCommit', Value: 'a'.repeat(40) }],
+          Parameters: [{ ParameterKey: 'DeploymentPhase', ParameterValue: 'bootstrap' }] }] };
+      }
+      return baseSend(command as never);
+    }) as never;
+    let deployAttempts = 0;
+    const runner = async (executable: string, args: readonly string[]) => {
+      if (args.includes('deploy')) throw new Error(++deployAttempts === 1 ? 'partial replacement failed' : 'retry deploy reached');
+      if (executable === process.execPath) return { stdout: 'v24.0.1\n', stderr: '' };
+      if (executable === 'pnpm' && args[0] === '--version') return { stdout: '11.22.0\n', stderr: '' };
+      if (executable === 'docker') return { stdout: 'Docker version 28.0.0\n', stderr: '' };
+      return { stdout: '', stderr: '' };
+    };
+    const runtime = makeAwsDemoDependencies({ account: manifest.account, region: manifest.region, postgresVersion: '17.6', durationHours: 1,
+      maxCostUsd: 1, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), accountsFile: '/unused', priceReport: '/unused' }, clients, runner, {
+      load: async () => saved, save: async (value) => { saved = structuredClone(value) as typeof saved; },
+    });
+    runtime.preflight = async () => {};
+    await expect(runDemo(runtime)).rejects.toThrow('partial replacement failed');
+    expect(saved.outputs).toEqual({});
+    await expect(runDemo(runtime)).rejects.toThrow('retry deploy reached');
+    expect(clients.commands.some((command) => command.constructor.name === 'InvokeCommand')).toBe(false);
   });
 
   it('resumes a partial bootstrap by redeploying bootstrap mode before migration', async () => {
@@ -242,6 +304,42 @@ describe('disposable deployment lifecycle', () => {
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 
+  it('passes only runtime-safe variables and exact credential file paths to AWS Playwright', async () => {
+    const root = await mkdtemp(join(await realpath(tmpdir()), 'portal-scrubbed-playwright-'));
+    const accountsFile = join(root, 'accounts.json');
+    await writeFile(accountsFile, JSON.stringify([
+      { alias: 'patient-a', email: 'patient-a@example.com', displayName: 'Alice Patient', role: 'patient' },
+      { alias: 'patient-b', email: 'patient-b@example.com', displayName: 'Bea Patient', role: 'patient' },
+      { alias: 'clinician-a', email: 'clinician-a@example.com', displayName: 'Casey Clinician', role: 'clinician' },
+      { alias: 'clinician-b', email: 'clinician-b@example.com', displayName: 'Devon Clinician', role: 'clinician' },
+    ]), { mode: 0o600 });
+    const hostile = {
+      AWS_ACCESS_KEY_ID: 'aws-access-sentinel', AWS_SECRET_ACCESS_KEY: 'aws-secret-sentinel', AWS_SESSION_TOKEN: 'aws-session-sentinel',
+      AWS_WEB_IDENTITY_TOKEN_FILE: '/tmp/oidc-sentinel', ACTIONS_ID_TOKEN_REQUEST_TOKEN: 'oidc-token-sentinel',
+      DEMO_PATIENT_A_EMAIL: 'controlled-email-sentinel', PORTAL_E2E_PATIENT_A_PASSWORD: 'legacy-password-sentinel',
+      PORTAL_E2E_UNEXPECTED_FILE: '/tmp/unexpected-file-sentinel', UNRELATED_SECRET: 'unrelated-secret-sentinel',
+    };
+    for (const [name, value] of Object.entries(hostile)) vi.stubEnv(name, value);
+    try {
+      const calls: { env?: NodeJS.ProcessEnv }[] = [];
+      const runtime = makeAwsDemoDependencies({ account: manifest.account, region: manifest.region, postgresVersion: '17.6', durationHours: 1,
+        maxCostUsd: 1, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), accountsFile, priceReport: accountsFile }, fakeAwsClients(),
+      async (_executable, _args, options) => { calls.push({ env: options?.env }); return { stdout: '', stderr: '' }; });
+      await runtime.verify({ ...manifest, outputs: { ...manifest.outputs, UserPoolId: 'eu-north-1_fixture' } });
+      const environment = calls[0]!.env!;
+      const credentialKeys = ['PORTAL_E2E_PATIENT_A_FILE', 'PORTAL_E2E_PATIENT_B_FILE', 'PORTAL_E2E_CLINICIAN_A_FILE', 'PORTAL_E2E_CLINICIAN_B_FILE'];
+      const allowed = new Set(['PATH', 'HOME', 'TMPDIR', 'TMP', 'TEMP', 'LANG', 'LC_ALL', 'TZ', 'CI', 'NODE_ENV', 'PORTAL_E2E_AWS',
+        'PORTAL_E2E_AWS_URL', 'PORTAL_E2E_PATIENT_A_FILE', 'PORTAL_E2E_PATIENT_B_FILE', 'PORTAL_E2E_CLINICIAN_A_FILE', 'PORTAL_E2E_CLINICIAN_B_FILE']);
+      expect(Object.keys(environment).every((name) => allowed.has(name))).toBe(true);
+      expect(Object.keys(environment).filter((name) => name.startsWith('PORTAL_E2E_')).sort()).toEqual([
+        'PORTAL_E2E_AWS', 'PORTAL_E2E_AWS_URL', 'PORTAL_E2E_CLINICIAN_A_FILE', 'PORTAL_E2E_CLINICIAN_B_FILE',
+        'PORTAL_E2E_PATIENT_A_FILE', 'PORTAL_E2E_PATIENT_B_FILE',
+      ]);
+      expect(JSON.stringify(environment)).not.toContain('sentinel');
+      expect(credentialKeys.filter((name) => environment[name])).toHaveLength(4);
+    } finally { vi.unstubAllEnvs(); await rm(root, { recursive: true, force: true }); }
+  });
+
   it('passes the deployment phase as an explicit CloudFormation parameter on every application deploy', async () => {
     const commands: (readonly string[])[] = [];
     const clients = fakeAwsClients({ DescribeStacksCommand: [
@@ -260,6 +358,36 @@ describe('disposable deployment lifecycle', () => {
     for (const [index, phase] of ['bootstrap', 'ready'].entries()) {
       const parameter = deploys[index]!.indexOf('--parameters');
       expect(deploys[index]!.slice(parameter, parameter + 2)).toEqual(['--parameters', `${manifest.appStack}:DeploymentPhase=${phase}`]);
+    }
+  });
+
+  it.each([
+    { requestedPhase: 'ready' as const, livePhase: undefined },
+    { requestedPhase: 'ready' as const, livePhase: 'bootstrap' as const },
+    { requestedPhase: 'bootstrap' as const, livePhase: 'ready' as const },
+  ])('rejects a successful $requestedPhase deploy when the live phase is $livePhase', async ({ requestedPhase, livePhase }) => {
+    let priorOutputs: string | undefined;
+    const outputPath = new URL('../../.runtime/cdk-outputs.json', import.meta.url);
+    try { priorOutputs = await readFile(outputPath, 'utf8'); } catch { priorOutputs = undefined; }
+    await mkdir(new URL('../../.runtime/', import.meta.url), { recursive: true, mode: 0o700 });
+    let saved: typeof manifest | undefined;
+    const tags = [{ Key: 'Project', Value: manifest.projectTag }, { Key: 'SourceCommit', Value: 'a'.repeat(40) }];
+    const clients = fakeAwsClients({
+      DescribeStacksCommand: [{ Stacks: [{ Tags: tags, ...(livePhase ? { Parameters: [{ ParameterKey: 'DeploymentPhase', ParameterValue: livePhase }] } : {}) }] }],
+      ListStackResourcesCommand: [{ StackResourceSummaries: [] }, { StackResourceSummaries: [] }, { StackResourceSummaries: [] }],
+    });
+    const runtime = makeAwsDemoDependencies({ account: manifest.account, region: manifest.region, postgresVersion: '17.6', durationHours: 1,
+      maxCostUsd: 1, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), accountsFile: '/unused', priceReport: '/unused' }, clients,
+    async (_executable, args) => {
+      if (args.includes('deploy')) await writeFile(outputPath, JSON.stringify({ [manifest.appStack]: manifest.outputs }));
+      return { stdout: '', stderr: '' };
+    }, { load: async () => saved, save: async (value) => { saved = structuredClone(value); } });
+    try {
+      await expect(runtime.deploy(requestedPhase, requestedPhase === 'ready' ? manifest.outputs.FrontendUrl : undefined)).rejects.toThrow(/phase/i);
+      expect(saved?.phase).not.toBe(requestedPhase);
+    } finally {
+      if (priorOutputs === undefined) await rm(outputPath, { force: true });
+      else await writeFile(outputPath, priorOutputs, { mode: 0o600 });
     }
   });
 

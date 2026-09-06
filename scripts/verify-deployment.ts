@@ -2,7 +2,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadDeploymentManifest } from './lifecycle-types.js';
 import { runProcess } from './preflight.js';
-import { awsPlaywrightFileEnvironment, readAwsDemoInput } from './aws-lifecycle.js';
+import { awsPlaywrightEnvironment, awsPlaywrightFileEnvironment, readAwsDemoInput } from './aws-lifecycle.js';
 
 export const verifyDeployment = async () => {
   const manifest = await loadDeploymentManifest();
@@ -14,9 +14,7 @@ export const verifyDeployment = async () => {
   const frontendUrl = manifest.outputs.FrontendUrl;
   if (!frontendUrl) throw new Error('FrontendUrl is missing from the manifest.');
   const fileEnvironment = await awsPlaywrightFileEnvironment(config, manifest);
-  await runProcess('pnpm', ['exec', 'playwright', 'test', '--project=aws'], { env: {
-    ...process.env, ...fileEnvironment, PORTAL_E2E_AWS: '1', PORTAL_E2E_AWS_URL: frontendUrl,
-  } });
+  await runProcess('pnpm', ['exec', 'playwright', 'test', '--project=aws'], { env: awsPlaywrightEnvironment(frontendUrl, fileEnvironment) });
 };
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

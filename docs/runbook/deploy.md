@@ -109,7 +109,9 @@ saves ready state, publishes, invalidates, and runs deployed tests.
 Each application deployment passes
 `AppointmentPortal:DeploymentPhase=bootstrap|ready` explicitly through CDK's
 `--parameters` option. The live parameter therefore records the deployed phase even
-when CloudFormation would otherwise reuse a previous parameter value.
+when CloudFormation would otherwise reuse a previous parameter value. After CDK
+returns successfully, the runner reinspects that live parameter and rejects a missing
+or mismatched phase before saving ready state, publishing, or starting browser tests.
 
 A saved ready deployment migrates in place and never restores administrator proxy
 auth. Function errors, unhealthy targets, callback mismatch, unsafe publication, or
@@ -132,14 +134,21 @@ that file for credential material before uploading it with the recovery inventor
 `pnpm demo:verify` rereads the matching private demo configuration and maps exactly
 `PATIENT_A`, `PATIENT_B`, `CLINICIAN_A`, and `CLINICIAN_B` to deterministic `0600`
 credential file paths. Playwright receives those paths, never generated passwords, in
-its environment. Runtime configuration, account, output, manifest, inventory, and
+its environment. The child environment is rebuilt from a small runtime allowlist, so
+AWS credentials, OIDC request values, controlled email inputs, GitHub tokens, and
+inherited `PORTAL_E2E_*` values cannot cross into Playwright. Runtime configuration, account, output, manifest, inventory, and
 credential reads and writes reject symlinked path components before access.
 
-Delivery setup checkpoints the minimal toolkit recovery manifest immediately after
-bootstrap returns and again after ownership is confirmed. It does the same around
+Delivery setup writes an ownership-neutral toolkit recovery target before invoking
+bootstrap, checkpoints it again immediately after bootstrap returns, then records
+ownership only after live inspection confirms the project tag. It does the same around
 the delivery-stack deployment before parsing outputs or collecting detailed resource
 inventory, so an interrupted first setup remains discoverable by the local `--all`
 cleanup path.
+
+Failure diagnostics are uploaded separately only when the allowlist-based artifact
+scan succeeds. A rejected diagnostics file is never included in the always-uploaded
+deployment-manifest artifact.
 
 The workflow uses concurrency group `appointment-portal-demo` with cancellation
 disabled. A lost runner cannot guarantee an `always()` cleanup step. Restore the

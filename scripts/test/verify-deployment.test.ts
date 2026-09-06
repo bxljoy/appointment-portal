@@ -42,14 +42,26 @@ afterEach(async () => {
 });
 
 it('standalone verification maps all four aliases to deterministic private files without exposing credentials', async () => {
-  await verifyDeployment();
-  expect(processMock).toHaveBeenCalledTimes(1);
-  const [, args, options] = processMock.mock.calls[0]!;
-  expect(args).toEqual(['exec', 'playwright', 'test', '--project=aws']);
-  const env = options!.env!;
-  const keys = ['PORTAL_E2E_PATIENT_A_FILE', 'PORTAL_E2E_PATIENT_B_FILE', 'PORTAL_E2E_CLINICIAN_A_FILE', 'PORTAL_E2E_CLINICIAN_B_FILE'];
-  expect(keys.map((key) => env[key])).toHaveLength(4);
-  expect(new Set(keys.map((key) => env[key])).size).toBe(4);
-  for (const key of keys) expect(env[key]).toMatch(/\.runtime\/credentials\/[a-zA-Z0-9_-]+-[a-f0-9]{64}\.json$/);
-  expect(JSON.stringify(processMock.mock.calls)).not.toMatch(/password|patient-a@example\.com/i);
+  const hostile = {
+    AWS_ACCESS_KEY_ID: 'aws-access-sentinel', AWS_SECRET_ACCESS_KEY: 'aws-secret-sentinel', AWS_SESSION_TOKEN: 'aws-session-sentinel',
+    AWS_WEB_IDENTITY_TOKEN_FILE: '/tmp/oidc-sentinel', ACTIONS_ID_TOKEN_REQUEST_URL: 'https://oidc.invalid/sentinel',
+    DEMO_CLINICIAN_A_EMAIL: 'controlled-email-sentinel', PORTAL_E2E_PATIENT_A_PASSWORD: 'legacy-password-sentinel',
+    PORTAL_E2E_OLD_FILE: '/tmp/old-file-sentinel', GH_TOKEN: 'github-token-sentinel',
+  };
+  for (const [name, value] of Object.entries(hostile)) vi.stubEnv(name, value);
+  try {
+    await verifyDeployment();
+    expect(processMock).toHaveBeenCalledTimes(1);
+    const [, args, options] = processMock.mock.calls[0]!;
+    expect(args).toEqual(['exec', 'playwright', 'test', '--project=aws']);
+    const env = options!.env!;
+    const keys = ['PORTAL_E2E_PATIENT_A_FILE', 'PORTAL_E2E_PATIENT_B_FILE', 'PORTAL_E2E_CLINICIAN_A_FILE', 'PORTAL_E2E_CLINICIAN_B_FILE'];
+    expect(keys.map((key) => env[key])).toHaveLength(4);
+    expect(new Set(keys.map((key) => env[key])).size).toBe(4);
+    for (const key of keys) expect(env[key]).toMatch(/\.runtime\/credentials\/[a-zA-Z0-9_-]+-[a-f0-9]{64}\.json$/);
+    const allowed = new Set(['PATH', 'HOME', 'TMPDIR', 'TMP', 'TEMP', 'LANG', 'LC_ALL', 'TZ', 'CI', 'NODE_ENV', 'PORTAL_E2E_AWS',
+      'PORTAL_E2E_AWS_URL', ...keys]);
+    expect(Object.keys(env).every((name) => allowed.has(name))).toBe(true);
+    expect(JSON.stringify(processMock.mock.calls)).not.toMatch(/password|patient-a@example\.com|sentinel/i);
+  } finally { vi.unstubAllEnvs(); }
 });

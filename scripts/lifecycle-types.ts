@@ -88,14 +88,40 @@ export const collectInventory = async (inventory: Pick<InventoryAdapter, 'page'>
 };
 
 export const deduplicateResources = (resources: ResourceRecord[]): ResourceRecord[] => {
-  const byIdentity = new Map<string, ResourceRecord>();
+  type Group = { resource: ResourceRecord; aliases: Set<string> };
+  const groups = new Set<Group>();
+  const byAlias = new Map<string, Group>();
+  const normalizedType = (type: string) => type.replace(/^(?:Application|Bootstrap|Delivery)::/, '');
+  const aliases = (resource: ResourceRecord) => [resource.id, ...(resource.arn ? [resource.arn] : [])]
+    .map((value) => `${normalizedType(resource.type)}\0${value}`);
+  const merge = (left: ResourceRecord, right: ResourceRecord): ResourceRecord => {
+    if (left.arn && right.arn && left.arn !== right.arn) throw new Error(`Conflicting ARN for ${left.type}:${left.id}.`);
+    const state = left.state === 'unverified' || right.state === 'unverified' ? 'unverified' as const :
+      left.state === 'scheduled' || right.state === 'scheduled' ? 'scheduled' as const : undefined;
+    const scopedType = /^(?:Application|Bootstrap|Delivery)::/.test(left.type) ? left.type : right.type;
+    const arn = left.arn ?? right.arn;
+    return { type: scopedType, id: left.id, ...(arn ? { arn } : {}),
+      owned: left.owned && right.owned, ...(state ? { state } : {}) };
+  };
   for (const resource of resources) {
-    const key = `${resource.type.replace(/^(?:Application|Bootstrap|Delivery)::/, '')}\0${resource.arn ?? resource.id}`;
-    const prior = byIdentity.get(key);
-    if (prior && prior.owned !== resource.owned) throw new Error(`Conflicting ownership for ${resource.type}:${resource.id}.`);
-    byIdentity.set(key, resource);
+    const keys = aliases(resource);
+    const matches = [...new Set(keys.flatMap((key) => byAlias.get(key) ? [byAlias.get(key)!] : []))];
+    if (matches.length === 0) {
+      const group = { resource, aliases: new Set(keys) };
+      groups.add(group);
+      for (const alias of keys) byAlias.set(alias, group);
+      continue;
+    }
+    const group = matches.shift()!;
+    for (const match of matches) {
+      group.resource = merge(group.resource, match.resource);
+      for (const alias of match.aliases) { group.aliases.add(alias); byAlias.set(alias, group); }
+      groups.delete(match);
+    }
+    group.resource = merge(group.resource, resource);
+    for (const alias of keys) { group.aliases.add(alias); byAlias.set(alias, group); }
   }
-  return [...byIdentity.values()];
+  return [...groups].map((group) => group.resource);
 };
 
 const hasCode = (error: unknown, code: string): boolean => typeof error === 'object' && error !== null && 'code' in error && error.code === code;

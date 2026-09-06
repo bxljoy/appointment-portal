@@ -61,6 +61,23 @@ describe('inventory-driven cleanup', () => {
     expect(inventory.stackDeletes).toEqual([manifest.appStack, manifest.appStack]);
   });
 
+  it('merges stack and service identities before DELETE_FAILED blocker cleanup', async () => {
+    const stackRecord = { type: 'Application::AWS::RDS::DBProxy', id: 'appointment-portal-proxy', owned: true };
+    const serviceRecord = { type: 'Application::AWS::RDS::DBProxy', id: 'appointment-portal-proxy',
+      arn: 'arn:aws:rds:eu-north-1:111111111111:db-proxy:prx-123', owned: true };
+    const inventory = fakeInventory({});
+    let failed = false; let removed = false; let waits = 0;
+    inventory.page = async () => ({ items: failed && !removed ? [stackRecord, serviceRecord] : [] });
+    inventory.waitStackDeleted = async () => { if (waits++ === 0) throw new Error('waiter failed'); };
+    inventory.stackStatus = async () => { failed = true; return 'DELETE_FAILED'; };
+    const deleteResource = inventory.deleteResource;
+    inventory.deleteResource = async (resource) => { await deleteResource(resource); removed = true; };
+    await cleanup(manifest, inventory);
+    expect(inventory.deleted).toEqual(['Application::AWS::RDS::DBProxy:appointment-portal-proxy']);
+    expect(inventory.events.filter((event) => event.includes('delete-resource'))).toHaveLength(1);
+    expect(waits).toBe(2);
+  });
+
   it('rethrows an observation failure without deleting blockers or retrying the stack', async () => {
     const snapshot = { type: 'AWS::RDS::DBSnapshot', id: 'must-not-delete', owned: true };
     const inventory = fakeInventory({ snapshots: [snapshot] });

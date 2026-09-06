@@ -65,6 +65,7 @@ jobs:
           pnpm demo:preflight
           pnpm demo:deploy
       - name: Capture sanitized failure diagnostics
+        id: diagnostics_scan
         if: failure()
         run: |
           pnpm demo:diagnostics
@@ -81,7 +82,15 @@ jobs:
           path: |
             .runtime/deployment.json
             .runtime/pre-destroy-inventory.json
-            .runtime/diagnostics.json
           include-hidden-files: true
           if-no-files-found: warn
+          retention-days: 7
+      - name: Upload scanned failure diagnostics
+        if: failure() && steps.diagnostics_scan.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: deployment-diagnostics
+          path: .runtime/diagnostics.json
+          include-hidden-files: true
+          if-no-files-found: error
           retention-days: 7

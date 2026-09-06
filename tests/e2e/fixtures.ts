@@ -1,10 +1,10 @@
-import { constants } from 'node:fs';
-import { open, lstat, realpath } from 'node:fs/promises';
+import { lstat } from 'node:fs/promises';
 import { isAbsolute, relative, resolve } from 'node:path';
 import { test as base, expect, type Page, type Locator } from '@playwright/test';
 import { z } from 'zod';
 import { accounts, names, startLocalPortal, type Account } from './local-auth.setup.js';
 import { assertAwsArtifactPrivacy } from './aws-artifact-privacy.js';
+import { readPrivateFile } from '../../scripts/private-file.js';
 
 type Portal = Awaited<ReturnType<typeof startLocalPortal>>;
 export const test = base.extend<{ scenario: Portal; artifactPrivacy: void }, { portal: Portal | undefined }>({
@@ -27,22 +27,18 @@ export const test = base.extend<{ scenario: Portal; artifactPrivacy: void }, { p
 export { expect, accounts, names };
 
 const credentialSchema = z.object({ email: z.email(), password: z.string().min(12), role: z.enum(['patient', 'clinician']), sub: z.uuid() });
-async function awsCredential(account: Account) {
+export async function awsCredential(account: Account) {
   const path = process.env[`PORTAL_E2E_${account.replace('-', '_').toUpperCase()}_FILE`];
   if (!path) throw new Error('A runtime account file is required.');
   const directory = resolve('.runtime');
   const directoryInfo = await lstat(directory);
-  const target = await realpath(path);
-  const child = relative(await realpath(directory), target);
-  if (!child || child.startsWith('..') || isAbsolute(child) || directoryInfo.isSymbolicLink() || (directoryInfo.mode & 0o777) !== 0o700) throw new Error('Unsafe runtime credential directory.');
-  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-  try {
-    const info = await handle.stat();
-    if (!info.isFile() || info.nlink !== 1 || info.uid !== process.getuid?.() || (info.mode & 0o777) !== 0o600 || info.size > 16_384) throw new Error('Unsafe runtime account file.');
-    const parsed = credentialSchema.safeParse(JSON.parse(await handle.readFile('utf8')));
-    if (!parsed.success || parsed.data.role !== (account.startsWith('patient') ? 'patient' : 'clinician')) throw new Error('Invalid runtime account file.');
-    return parsed.data;
-  } finally { await handle.close(); }
+  const target = resolve(path);
+  const child = relative(directory, target);
+  if (!child || child.startsWith('..') || isAbsolute(child) || !directoryInfo.isDirectory() || directoryInfo.isSymbolicLink() ||
+    directoryInfo.uid !== process.getuid?.() || (directoryInfo.mode & 0o777) !== 0o700) throw new Error('Unsafe runtime credential directory.');
+  const parsed = credentialSchema.safeParse(JSON.parse(await readPrivateFile(target, 16_384)));
+  if (!parsed.success || parsed.data.role !== (account.startsWith('patient') ? 'patient' : 'clinician')) throw new Error('Invalid runtime account file.');
+  return parsed.data;
 }
 
 export async function signIn(page: Page, account: Account) {

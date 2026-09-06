@@ -97,18 +97,23 @@ const contextArgs = (input: AwsDemoInput, phase: 'bootstrap' | 'ready', frontend
   ...(frontendUrl ? ['-c', `frontendUrl=${frontendUrl}`] : []),
 ];
 
-export const makeAwsDemoDependencies = (input: AwsDemoInput, clients = clientsFor(input.region), runner: ProcessRunner = runProcess): DemoDependencies => {
+export const makeAwsDemoDependencies = (input: AwsDemoInput, clients = clientsFor(input.region), runner: ProcessRunner = runProcess,
+  manifestStore: { load?: () => Promise<DeploymentManifest | undefined>; save?: (manifest: DeploymentManifest) => Promise<void> } = {}): DemoDependencies => {
   const config: DemoConfig = { ...input, qualifier: QUALIFIER, toolkitStack: TOOLKIT_STACK, appStack: APP_STACK, deliveryStack: DELIVERY_STACK, projectTag: PROJECT_TAG };
   const credentials = new RuntimeCredentialStore(resolve('.runtime/credentials'));
   let activeManifest: DeploymentManifest | undefined;
   return {
     config,
     loadManifest: async () => {
-      activeManifest = await (await import('./lifecycle-types.js')).loadDeploymentManifest();
+      activeManifest = await (manifestStore.load ?? (async () => (await import('./lifecycle-types.js')).loadDeploymentManifest()))();
       return activeManifest;
     },
-    saveManifest: async (manifest) => { activeManifest = manifest; await (await import('./lifecycle-types.js')).saveDeploymentManifest(manifest); },
-    preflight: async () => { await runPreflight(input, makeAwsPreflightProbe(input, clients, runner)); },
+    saveManifest: async (manifest) => {
+      activeManifest = manifest;
+      await (manifestStore.save ?? (async (value) => (await import('./lifecycle-types.js')).saveDeploymentManifest(value)))(manifest);
+    },
+    preflight: async () => { await runPreflight({ account: input.account, region: input.region, postgresVersion: input.postgresVersion,
+      durationHours: input.durationHours, maxCostUsd: input.maxCostUsd }, makeAwsPreflightProbe(input, clients, runner)); },
     inspectApplication: async () => inspectStackOwnership(clients.cloudformation, APP_STACK),
     inspectBootstrap: async () => inspectStackOwnership(clients.cloudformation, TOOLKIT_STACK),
     bootstrap: async () => {
@@ -123,22 +128,26 @@ export const makeAwsDemoDependencies = (input: AwsDemoInput, clients = clientsFo
           '--outputs-file', outputPath, '--parameters', `${APP_STACK}:DeploymentPhase=${phase}`, ...contextArgs(input, phase, frontendUrl)]);
       } catch (error) {
         const live = await inspectStackOwnership(clients.cloudformation, APP_STACK);
-        if (live.exists && live.owned) await persistRecovery(live.phase ?? phase, live.outputs ?? activeManifest?.outputs ?? {}, []);
+        if (live.exists && live.owned) await persistRecovery(live.phase ?? 'bootstrap', live.outputs ?? {}, []);
         throw error;
       }
       const live = await inspectStackOwnership(clients.cloudformation, APP_STACK);
       if (!live.exists || !live.owned) throw new Error('Deployed application stack does not have established ownership.');
-      await persistRecovery(live.phase ?? phase, live.outputs ?? {}, []);
+      if (live.phase !== phase) {
+        if (live.phase) await persistRecovery(live.phase, live.outputs ?? {}, []);
+        throw new Error(`Live deployment phase does not match requested ${phase} phase.`);
+      }
+      await persistRecovery(live.phase, live.outputs ?? {}, []);
       const outputsFile = z.record(z.string(), z.record(z.string(), z.string())).parse(JSON.parse(await readPrivateFile(outputPath)));
       const outputs = outputsFile[APP_STACK];
       if (!outputs) throw new Error('CDK outputs did not contain the application stack.');
-      await persistRecovery(phase, outputs, []);
+      await persistRecovery(live.phase, outputs, []);
       const application = await listStackResources(clients.cloudformation, APP_STACK, 'Application::');
       const toolkit = await listStackResources(clients.cloudformation, TOOLKIT_STACK, 'Bootstrap::');
       const delivery = await maybeListStackResources(clients.cloudformation, DELIVERY_STACK, 'Delivery::');
       activeManifest = {
         account: input.account, region: input.region, projectTag: PROJECT_TAG, appStack: APP_STACK,
-        deliveryStack: DELIVERY_STACK, toolkitStack: TOOLKIT_STACK, qualifier: QUALIFIER, phase, outputs,
+        deliveryStack: DELIVERY_STACK, toolkitStack: TOOLKIT_STACK, qualifier: QUALIFIER, phase: live.phase, outputs,
         resources: deduplicateResources([...application, ...toolkit, ...delivery]),
         ...(input.sourceCommit ? { sourceCommit: input.sourceCommit } : {}),
       };
@@ -156,9 +165,7 @@ export const makeAwsDemoDependencies = (input: AwsDemoInput, clients = clientsFo
     verify: async (manifest) => {
       const frontendUrl = requiredManifestOutput(manifest, 'FrontendUrl');
       const fileEnvironment = await awsPlaywrightFileEnvironment(input, manifest, credentials);
-      await runner('pnpm', ['exec', 'playwright', 'test', '--project=aws'], { env: {
-        ...process.env, ...fileEnvironment, PORTAL_E2E_AWS: '1', PORTAL_E2E_AWS_URL: frontendUrl,
-      } });
+      await runner('pnpm', ['exec', 'playwright', 'test', '--project=aws'], { env: awsPlaywrightEnvironment(frontendUrl, fileEnvironment) });
     },
   };
 
@@ -168,7 +175,7 @@ export const makeAwsDemoDependencies = (input: AwsDemoInput, clients = clientsFo
       toolkitStack: TOOLKIT_STACK, qualifier: QUALIFIER, phase, outputs, resources,
       ...(input.sourceCommit ? { sourceCommit: input.sourceCommit } : {}),
     };
-    await saveDeploymentManifest(activeManifest);
+    await (manifestStore.save ?? saveDeploymentManifest)(activeManifest);
   }
 };
 
@@ -229,6 +236,12 @@ export const awsPlaywrightFileEnvironment = async (input: Pick<AwsDemoInput, 'ac
     `PORTAL_E2E_${account.alias.replace('-', '_').toUpperCase()}_FILE`, credentials.filePath(userPoolId, account.email),
   ]));
 };
+
+const PLAYWRIGHT_RUNTIME_ENVIRONMENT = ['PATH', 'HOME', 'TMPDIR', 'TMP', 'TEMP', 'LANG', 'LC_ALL', 'TZ', 'CI', 'NODE_ENV'] as const;
+export const awsPlaywrightEnvironment = (frontendUrl: string, fileEnvironment: Record<string, string>, environment = process.env): NodeJS.ProcessEnv => ({
+  ...Object.fromEntries(PLAYWRIGHT_RUNTIME_ENVIRONMENT.flatMap((name) => environment[name] === undefined ? [] : [[name, environment[name]!]])),
+  ...fileEnvironment, PORTAL_E2E_AWS: '1', PORTAL_E2E_AWS_URL: frontendUrl,
+});
 
 const publishBuiltFrontend = async (manifest: DeploymentManifest, clients: AwsClients): Promise<void> => {
   const files = await readFrontendFiles(resolve('apps/web/dist'));
