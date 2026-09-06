@@ -107,6 +107,7 @@ describe('clinician scheduling journeys', () => {
     const second = { ...slot, id: '10000000-0000-4000-8000-000000000025', startAt: '2030-02-10T09:00:00Z', endAt: '2030-02-10T09:30:00Z' };
     const requested: URL[] = [];
     let resolveNextPage: ((value: Response) => void) | undefined;
+    let deferredNextPageUrl: URL | undefined;
     let loadingNextPage = true;
     let firstPage = first;
     vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -116,7 +117,7 @@ describe('clinician scheduling journeys', () => {
       if (url.pathname === '/api/availability' && !init?.method) {
         requested.push(url);
         if (url.searchParams.get('from') === '2030-02-07T23:00:00Z' && url.searchParams.get('cursor') === 'next-page' && loadingNextPage) {
-          return new Promise<Response>((resolve) => { resolveNextPage = resolve; });
+          return new Promise<Response>((resolve) => { deferredNextPageUrl = url; resolveNextPage = resolve; });
         }
         if (url.searchParams.get('from') === '2030-02-07T23:00:00Z' && url.searchParams.get('cursor') === 'next-page') return Promise.resolve(response({ items: slotsInRequestedWindow(url, [second]), nextCursor: null }));
         if (url.searchParams.get('from') === '2030-02-07T23:00:00Z') return Promise.resolve(response({ items: slotsInRequestedWindow(url, [firstPage]), nextCursor: 'next-page' }));
@@ -139,7 +140,8 @@ describe('clinician scheduling journeys', () => {
     expect(loadMore).toBeDisabled();
     expect(screen.getByText(/Sat, 9 Feb 2030/)).toBeInTheDocument();
     loadingNextPage = false;
-    resolveNextPage?.(response({ items: [second], nextCursor: null }));
+    expect(deferredNextPageUrl).toBeDefined();
+    resolveNextPage?.(response({ items: slotsInRequestedWindow(deferredNextPageUrl!, [second]), nextCursor: null }));
     expect(await screen.findByText(/Sun, 10 Feb 2030/)).toBeInTheDocument();
     await portal.user.click(screen.getAllByRole('button', { name: 'Withdraw slot' })[0]!);
     expect(await screen.findByText('Withdrawn')).toBeInTheDocument();
