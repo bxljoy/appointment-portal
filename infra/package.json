@@ -1,0 +1,21 @@
+{
+  "name": "@portal/infra",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "synth": "cdk synth --no-lookups"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "2.268.0",
+    "constructs": "10.8.1",
+    "zod": "4.1.12"
+  },
+  "devDependencies": {
+    "@types/node": "26.4.1",
+    "aws-cdk": "2.1140.0",
+    "tsx": "4.20.6"
+  }
+}
