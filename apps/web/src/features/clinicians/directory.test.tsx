@@ -57,4 +57,21 @@ describe('clinician directory', () => {
     renderPortalPage(<AppRoutes />, { initialEntry: '/clinicians' });
     expect(await screen.findByRole('alert')).toHaveTextContent('Directory unavailable');
   });
+
+  it('accumulates every cursor page and disables the next-page action while it loads', async () => {
+    let resolveSecond: ((value: Response) => void) | undefined;
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+      const url = new URL(String(input), 'https://portal.test');
+      if (url.pathname === '/api/me') return Promise.resolve(response(me));
+      if (url.searchParams.get('cursor') === 'next-page') return new Promise<Response>((resolve) => { resolveSecond = resolve; });
+      return Promise.resolve(response({ items: [clinician], nextCursor: 'next-page' }));
+    }));
+    const portal = renderPortalPage(<AppRoutes />, { initialEntry: '/clinicians?specialty=Primary%20care' });
+    expect(await screen.findByRole('link', { name: /Dr\. Ada Lovelace/i })).toBeInTheDocument();
+    await portal.user.click(screen.getByRole('button', { name: 'Load more clinicians' }));
+    expect(screen.getByRole('button', { name: 'Load more clinicians' })).toBeDisabled();
+    resolveSecond?.(response({ items: [{ ...therapist, specialty: 'Primary care' }], nextCursor: null }));
+    expect(await screen.findByRole('link', { name: /Dr\. Maya Chen/i })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Dr\. Ada Lovelace/i })).toBeInTheDocument();
+  });
 });

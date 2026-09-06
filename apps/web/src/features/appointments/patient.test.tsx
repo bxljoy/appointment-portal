@@ -1,5 +1,6 @@
 import { screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { Appointment } from '@portal/contracts';
 
 import { AppRoutes } from '../../app/router';
 import { renderPortalPage } from '../../test/render';
@@ -13,7 +14,7 @@ const ids = {
 const me = { id: ids.patient, displayName: 'Pat Lee', role: 'patient' };
 const clinician = { id: ids.clinician, displayName: 'Dr. Ada Lovelace', biography: 'Supports practical care planning.', specialty: 'Primary care', timezone: 'Europe/Stockholm' };
 const slot = { id: ids.slot, clinicianId: ids.clinician, startAt: '2030-01-15T09:00:00.000Z', endAt: '2030-01-15T09:30:00.000Z', status: 'open', isBooked: false };
-const appointment = { id: ids.appointment, slotId: ids.slot, clinicianId: ids.clinician, patientId: ids.patient, patientDisplayName: 'Pat Lee', clinicianDisplayName: 'Dr. Ada Lovelace', startAt: slot.startAt, endAt: slot.endAt, status: 'booked', cancelledAt: null, cancelledBy: null };
+const appointment: Appointment = { id: ids.appointment, slotId: ids.slot, clinicianId: ids.clinician, patientId: ids.patient, patientDisplayName: 'Pat Lee', clinicianDisplayName: 'Dr. Ada Lovelace', startAt: slot.startAt, endAt: slot.endAt, status: 'booked', cancelledAt: null, cancelledBy: null };
 
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 afterEach(() => vi.unstubAllGlobals());
@@ -32,11 +33,13 @@ describe('patient appointment journeys', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
     const portal = renderPortalPage(<AppRoutes />, { initialEntry: `/clinicians/${ids.clinician}?date=2030-01-15` });
+    portal.queryClient.setQueryData(['patient-sub', 'appointments', 'first'], { items: [], nextCursor: null });
 
     await portal.user.click(await screen.findByRole('button', { name: 'Book appointment' }));
     expect(screen.getByRole('button', { name: 'Book appointment' })).toBeDisabled();
     completeBooking?.(response(appointment, 201));
     expect(await screen.findByText('Appointment confirmed')).toBeInTheDocument();
+    expect(portal.queryClient.getQueryState(['patient-sub', 'appointments', 'first'])?.isInvalidated).toBe(true);
     await waitFor(() => expect(fetchMock.mock.calls.filter(([request]) => new URL(String(request), 'https://portal.test').pathname.endsWith('/slots')).length).toBeGreaterThan(1));
     await portal.user.click(screen.getByRole('link', { name: 'Appointments' }));
     expect(await screen.findByText('Upcoming appointment')).toBeInTheDocument();
@@ -59,13 +62,66 @@ describe('patient appointment journeys', () => {
     await waitFor(() => expect(slotRequests).toBeGreaterThan(1));
   });
 
-  it('requires an accessible confirmation dialog before cancelling and restores focus', async () => {
-    let completeCancellation: ((value: Response) => void) | undefined;
+  it('reconciles a direct-first-visit network failure before showing confirmation', async () => {
+    let appointmentsReads = 0;
     vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'https://portal.test');
       if (url.pathname === '/api/me') return Promise.resolve(response(me));
-      if (url.pathname === '/api/appointments' && !init?.method) return Promise.resolve(response({ items: [appointment], nextCursor: null }));
-      if (url.pathname === `/api/appointments/${ids.appointment}/cancel`) return new Promise<Response>((resolve) => { completeCancellation = resolve; });
+      if (url.pathname === `/api/clinicians/${ids.clinician}`) return Promise.resolve(response(clinician));
+      if (url.pathname === `/api/clinicians/${ids.clinician}/slots`) return Promise.resolve(response({ items: [slot], nextCursor: null }));
+      if (url.pathname === '/api/appointments' && init?.method === 'POST') return Promise.reject(new TypeError('offline'));
+      if (url.pathname === '/api/appointments') { appointmentsReads += 1; return Promise.resolve(response({ items: [appointment], nextCursor: null })); }
+      throw new Error(`Unexpected request ${url.pathname}`);
+    }));
+    const portal = renderPortalPage(<AppRoutes />, { initialEntry: `/clinicians/${ids.clinician}?date=2030-01-15` });
+    await portal.user.click(await screen.findByRole('button', { name: 'Book appointment' }));
+    expect(await screen.findByText('Appointment confirmed')).toBeInTheDocument();
+    expect(appointmentsReads).toBe(1);
+  });
+
+  it('blocks a blind duplicate retry when network reconciliation also fails', async () => {
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), 'https://portal.test');
+      if (url.pathname === '/api/me') return Promise.resolve(response(me));
+      if (url.pathname === `/api/clinicians/${ids.clinician}`) return Promise.resolve(response(clinician));
+      if (url.pathname === `/api/clinicians/${ids.clinician}/slots`) return Promise.resolve(response({ items: [slot], nextCursor: null }));
+      if (url.pathname === '/api/appointments' && init?.method === 'POST') return Promise.reject(new TypeError('offline'));
+      if (url.pathname === '/api/appointments') return Promise.reject(new TypeError('offline'));
+      throw new Error(`Unexpected request ${url.pathname}`);
+    }));
+    const portal = renderPortalPage(<AppRoutes />, { initialEntry: `/clinicians/${ids.clinician}?date=2030-01-15` });
+    await portal.user.click(await screen.findByRole('button', { name: 'Book appointment' }));
+    expect(await screen.findByText('We could not determine whether your booking was created.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Book appointment' })).toBeDisabled();
+    expect(screen.getByRole('link', { name: 'Open your appointments' })).toBeInTheDocument();
+  });
+
+  it('accumulates appointment cursor pages without a duplicate next-page action', async () => {
+    let resolveSecond: ((value: Response) => void) | undefined;
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), 'https://portal.test');
+      if (url.pathname === '/api/me') return Promise.resolve(response(me));
+      if (url.pathname === '/api/appointments' && init?.method === undefined && url.searchParams.get('cursor') === 'next-page') return new Promise<Response>((resolve) => { resolveSecond = resolve; });
+      if (url.pathname === '/api/appointments' && init?.method === undefined) return Promise.resolve(response({ items: [appointment], nextCursor: 'next-page' }));
+      throw new Error(`Unexpected request ${url.pathname}`);
+    }));
+    const portal = renderPortalPage(<AppRoutes />, { initialEntry: '/appointments' });
+    expect(await screen.findByText('Upcoming appointment')).toBeInTheDocument();
+    await portal.user.click(screen.getByRole('button', { name: 'Load more appointments' }));
+    expect(screen.getByRole('button', { name: 'Load more appointments' })).toBeDisabled();
+    resolveSecond?.(response({ items: [{ ...appointment, id: '10000000-0000-4000-8000-000000000031', status: 'cancelled', cancelledAt: '2029-12-01T10:00:00.000Z', cancelledBy: ids.patient }], nextCursor: null }));
+    expect(await screen.findByText('Cancelled')).toBeInTheDocument();
+    expect(screen.getByText('Upcoming appointment')).toBeInTheDocument();
+  });
+
+  it('requires an accessible confirmation dialog before cancelling and restores focus', async () => {
+    let completeCancellation: ((value: Response) => void) | undefined;
+    let currentAppointment: Appointment = appointment;
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), 'https://portal.test');
+      if (url.pathname === '/api/me') return Promise.resolve(response(me));
+      if (url.pathname === '/api/appointments' && !init?.method) return Promise.resolve(response({ items: [currentAppointment], nextCursor: null }));
+      if (url.pathname === `/api/appointments/${ids.appointment}/cancel`) return new Promise<Response>((resolve) => { completeCancellation = (value) => { currentAppointment = { ...appointment, status: 'cancelled', cancelledAt: '2029-12-01T10:00:00.000Z', cancelledBy: ids.patient }; resolve(value); }; });
       throw new Error(`Unexpected request ${url.pathname}`);
     }));
     const portal = renderPortalPage(<AppRoutes />, { initialEntry: '/appointments' });
@@ -74,8 +130,11 @@ describe('patient appointment journeys', () => {
     expect(screen.getByRole('dialog', { name: 'Cancel appointment' })).toBeInTheDocument();
     expect(completeCancellation).toBeUndefined();
     await portal.user.click(screen.getByRole('button', { name: 'Confirm cancellation' }));
+    expect(screen.getByRole('button', { name: 'Confirm cancellation' })).toBeDisabled();
     completeCancellation?.(response({ ...appointment, status: 'cancelled', cancelledAt: '2029-12-01T10:00:00.000Z', cancelledBy: ids.patient }));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-    expect(trigger).toHaveFocus();
+    expect(await screen.findByText('Cancelled')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Appointment history' })).toHaveFocus();
+    expect(trigger).not.toBeInTheDocument();
   });
 });
