@@ -1,4 +1,5 @@
 import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { Temporal } from '@js-temporal/polyfill';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Appointment, Slot } from '@portal/contracts';
 
@@ -17,8 +18,18 @@ const patient = { id: ids.patient, displayName: 'Pat Lee', role: 'patient' };
 const slot: Slot = { id: ids.slot, clinicianId: ids.clinician, startAt: '2030-01-15T09:00:00Z', endAt: '2030-01-15T09:30:00Z', status: 'open', isBooked: false };
 const appointment: Appointment = { id: ids.appointment, slotId: ids.slot, clinicianId: ids.clinician, patientId: ids.patient, patientDisplayName: 'Pat Lee', clinicianDisplayName: 'Dr. Ada Lovelace', startAt: slot.startAt, endAt: slot.endAt, status: 'booked', cancelledAt: null, cancelledBy: null };
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+const slotsInRequestedWindow = (url: URL, slots: Slot[]) => {
+  const from = url.searchParams.get('from');
+  const to = url.searchParams.get('to');
+  expect(from).not.toBeNull();
+  expect(to).not.toBeNull();
+  const fromInstant = Temporal.Instant.from(from!);
+  const toInstant = Temporal.Instant.from(to!);
+  expect(Temporal.Instant.compare(fromInstant, toInstant)).toBeLessThan(0);
+  return slots.filter((slot) => Temporal.Instant.compare(Temporal.Instant.from(slot.startAt), fromInstant) >= 0 && Temporal.Instant.compare(Temporal.Instant.from(slot.startAt), toInstant) < 0);
+};
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe('clinician scheduling journeys', () => {
   it('publishes a timezone-labelled slot and previews its 30-minute end', async () => {
@@ -26,7 +37,7 @@ describe('clinician scheduling journeys', () => {
       const url = new URL(String(input), 'https://portal.test');
       if (url.pathname === '/api/me') return Promise.resolve(response(clinician));
       if (url.pathname === `/api/clinicians/${ids.clinician}`) return Promise.resolve(response(clinicianProfile));
-      if (url.pathname === '/api/availability' && !init?.method) return Promise.resolve(response({ items: [slot], nextCursor: null }));
+      if (url.pathname === '/api/availability' && !init?.method) return Promise.resolve(response({ items: slotsInRequestedWindow(url, [slot]), nextCursor: null }));
       if (url.pathname === '/api/availability' && init?.method === 'POST') return Promise.resolve(response(slot, 201));
       throw new Error(`Unexpected request ${url.pathname}`);
     }));
@@ -70,17 +81,20 @@ describe('clinician scheduling journeys', () => {
   });
 
   it('offers withdrawal only for a future open and unbooked agenda entry', async () => {
-    const booked = { ...slot, id: '10000000-0000-4000-8000-000000000021', isBooked: true };
-    const withdrawn = { ...slot, id: '10000000-0000-4000-8000-000000000022', status: 'withdrawn' as const };
-    const past = { ...slot, id: '10000000-0000-4000-8000-000000000023', startAt: '2020-01-15T09:00:00Z', endAt: '2020-01-15T09:30:00Z' };
+    vi.spyOn(Temporal.Now, 'instant').mockReturnValue(Temporal.Instant.from('2030-01-15T12:00:00Z'));
+    const future = { ...slot, startAt: '2030-01-16T09:00:00Z', endAt: '2030-01-16T09:30:00Z' };
+    const booked = { ...future, id: '10000000-0000-4000-8000-000000000021', isBooked: true };
+    const withdrawn = { ...future, id: '10000000-0000-4000-8000-000000000022', status: 'withdrawn' as const };
+    const past = { ...future, id: '10000000-0000-4000-8000-000000000023', startAt: '2030-01-15T09:00:00Z', endAt: '2030-01-15T09:30:00Z' };
     vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'https://portal.test');
       if (url.pathname === '/api/me') return Promise.resolve(response(clinician));
       if (url.pathname === `/api/clinicians/${ids.clinician}`) return Promise.resolve(response(clinicianProfile));
-      if (url.pathname === '/api/availability' && !init?.method) return Promise.resolve(response({ items: [slot, booked, withdrawn, past], nextCursor: null }));
+      if (url.pathname === '/api/availability' && !init?.method) return Promise.resolve(response({ items: slotsInRequestedWindow(url, [future, booked, withdrawn, past]), nextCursor: null }));
       throw new Error(`Unexpected request ${url.pathname}`);
     }));
     renderPortalPage(<AppRoutes />, { initialEntry: '/clinician/availability', sub: 'clinician-sub' });
+    fireEvent.change(await screen.findByLabelText('Availability week starting'), { target: { value: '2030-01-14' } });
 
     expect(await screen.findAllByText('Open — available to patients')).toHaveLength(2);
     expect(screen.getByText('Open — booked')).toBeInTheDocument();
@@ -93,17 +107,24 @@ describe('clinician scheduling journeys', () => {
     const second = { ...slot, id: '10000000-0000-4000-8000-000000000025', startAt: '2030-02-10T09:00:00Z', endAt: '2030-02-10T09:30:00Z' };
     const requested: URL[] = [];
     let resolveNextPage: ((value: Response) => void) | undefined;
+    let loadingNextPage = true;
+    let firstPage = first;
     vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'https://portal.test');
       if (url.pathname === '/api/me') return Promise.resolve(response(clinician));
       if (url.pathname === `/api/clinicians/${ids.clinician}`) return Promise.resolve(response(clinicianProfile));
       if (url.pathname === '/api/availability' && !init?.method) {
         requested.push(url);
-        if (url.searchParams.get('from') === '2030-02-07T23:00:00Z' && url.searchParams.get('cursor') === 'next-page') {
+        if (url.searchParams.get('from') === '2030-02-07T23:00:00Z' && url.searchParams.get('cursor') === 'next-page' && loadingNextPage) {
           return new Promise<Response>((resolve) => { resolveNextPage = resolve; });
         }
-        if (url.searchParams.get('from') === '2030-02-07T23:00:00Z') return Promise.resolve(response({ items: [first], nextCursor: 'next-page' }));
-        return Promise.resolve(response({ items: [], nextCursor: null }));
+        if (url.searchParams.get('from') === '2030-02-07T23:00:00Z' && url.searchParams.get('cursor') === 'next-page') return Promise.resolve(response({ items: slotsInRequestedWindow(url, [second]), nextCursor: null }));
+        if (url.searchParams.get('from') === '2030-02-07T23:00:00Z') return Promise.resolve(response({ items: slotsInRequestedWindow(url, [firstPage]), nextCursor: 'next-page' }));
+        return Promise.resolve(response({ items: slotsInRequestedWindow(url, []), nextCursor: null }));
+      }
+      if (url.pathname === `/api/availability/${first.id}/withdraw`) {
+        firstPage = { ...first, status: 'withdrawn' };
+        return Promise.resolve(response(firstPage));
       }
       throw new Error(`Unexpected request ${url.pathname}`);
     }));
@@ -117,8 +138,11 @@ describe('clinician scheduling journeys', () => {
     await portal.user.click(loadMore);
     expect(loadMore).toBeDisabled();
     expect(screen.getByText(/Sat, 9 Feb 2030/)).toBeInTheDocument();
+    loadingNextPage = false;
     resolveNextPage?.(response({ items: [second], nextCursor: null }));
     expect(await screen.findByText(/Sun, 10 Feb 2030/)).toBeInTheDocument();
+    await portal.user.click(screen.getAllByRole('button', { name: 'Withdraw slot' })[0]!);
+    expect(await screen.findByText('Withdrawn')).toBeInTheDocument();
   });
 
   it('accumulates clinician appointments while loading the next page', async () => {
@@ -163,7 +187,7 @@ describe('clinician scheduling journeys', () => {
       const url = new URL(String(input), 'https://portal.test');
       if (url.pathname === '/api/me') return Promise.resolve(response(clinician));
       if (url.pathname === `/api/clinicians/${ids.clinician}`) return Promise.resolve(response(clinicianProfile));
-      if (url.pathname === '/api/availability' && !init?.method) return Promise.resolve(response({ items: [], nextCursor: null }));
+      if (url.pathname === '/api/availability' && !init?.method) return Promise.resolve(response({ items: slotsInRequestedWindow(url, []), nextCursor: null }));
       if (url.pathname === '/api/availability' && init?.method === 'POST') return Promise.resolve(response({ error: { code: 'SLOT_OVERLAP', message: 'This slot overlaps an existing availability entry.', requestId: 'request-overlap' } }, 409));
       throw new Error(`Unexpected request ${url.pathname}`);
     }));
