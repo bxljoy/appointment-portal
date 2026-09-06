@@ -65,6 +65,9 @@ Do not publish those directories. Screenshots use only the local fictional data.
 
 After the setup above:
 
+Run the full suite and local Playwright sequentially: the Playwright runner cleans
+`test-results/`, which also holds private synthetic-regression fixtures.
+
 ```sh
 corepack pnpm@11.22.0 lint
 corepack pnpm@11.22.0 typecheck
@@ -153,9 +156,17 @@ PORTAL_E2E_AWS=1 corepack pnpm@11.22.0 exec playwright test --project=aws
 AWS traces, videos, screenshots, HARs and saved storage state are prohibited by the
 automatic fixture before credentials can be entered. Only the list reporter is
 accepted: HTML/JSON/blob reports can include successful credential-fill step values.
-The AWS fixture also rejects any nonempty `DEBUG`, `DEBUG_FILE`, `PWDEBUG` (including
-its npm aliases), Playwright implementation/runner/reporter debug switches, injected
+When AWS is enabled, config evaluation rejects `--debug` (including both CLI and
+Inspector modes), `--ui`, `--ui-host` and `--ui-port` before browser workers or
+interactive runners start. Both `--option=value` and `--option value` spellings
+are checked. The same boundary rejects any nonempty `DEBUG`, `DEBUG_FILE`, `PWDEBUG`
+(including `npm_config_pwdebug` and `npm_package_config_pwdebug`), `PWPAUSE`,
+`PWTEST_WATCH`, Playwright implementation/runner/reporter debug switches, injected
 `PW_TEST_REPORTER`, dashboard/controller debugging and module instrumentation.
+The automatic fixture repeats this check before credentials can be entered.
+Local-only interactive runs remain available when AWS is disabled. The hidden
+`test-server` and `run-test-mcp-server` commands are also rejected when they load
+this config; their server startup can precede lazy config loading.
 Protocol logging can expose raw password input even when ordinary artifacts are off;
 diagnostics must be disabled before controlled credentials are entered.
 Config evaluation sets Playwright's `PLAYWRIGHT_NO_COPY_PROMPT=1` opt-out before
@@ -169,7 +180,16 @@ HTTP login that returns 401, deliberately fails after submission, scans the actu
 failure outputs, and deletes the temporary data even on failure. Additional runs
 prove that JSON/environment reporter overrides, protocol debug logging, a debug file,
 and combined protocol/file logging fail before credential submission, with no password
-in stdout/stderr or any generated file. No real account or AWS endpoint is used.
+in stdout/stderr or any generated file. The subprocess matrix also covers CLI debug
+with both spellings, all three UI entry points, pause and watch. These runs must
+reject during config import and exit without a timeout. UI regression subprocesses
+use the installed runner's `PWTEST_UNDER_TEST=1` switch to keep UI Chromium headless
+and avoid opening a desktop browser; the runner/config path remains real. An eight
+second deadline interrupts interactive cases, followed by owned process-group
+cleanup after three seconds. Output scans wait for the subprocess streams to close.
+Public config-import tests cover the Inspector variants, hidden server commands and
+environment aliases without starting a headed Inspector or attaching an external
+client. No real account or AWS endpoint is used.
 These executable regressions must pass on any Playwright
 upgrade, because the opt-out is an upstream environment switch rather than a typed
 public configuration option. The deployed AWS smoke project remains unexecuted.

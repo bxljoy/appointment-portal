@@ -18,6 +18,7 @@ describe('AWS recording boundary', () => {
     ['PWDEBUG', 'console'], ['PWDEBUG', '0'], ['npm_config_pwdebug', '1'], ['npm_package_config_pwdebug', '1'],
     ['PWDEBUGIMPL', '1'], ['PW_TEST_DEBUG_REPORTERS', '1'], ['PW_RUNNER_DEBUG', '1'], ['PWTEST_DEBUG', '1'],
     ['PW_TEST_REPORTER', 'json'], ['PLAYWRIGHT_DASHBOARD', '1'], ['PW_DEBUG_CONTROLLER_HEADLESS', '1'], ['PW_INSTRUMENT_MODULES', '1'],
+    ['PWPAUSE', '1'], ['PWTEST_WATCH', '1'],
   ])('rejects diagnostic environment %s=%s before credentials', (name, value) => {
     vi.stubEnv(name!, value!);
     expect(() => assertAwsArtifactPrivacy([['list']], safe)).toThrow(/artifacts must be disabled/);

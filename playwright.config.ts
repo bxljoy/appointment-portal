@@ -1,8 +1,12 @@
 import { defineConfig } from '@playwright/test';
+import { assertAwsRunnerPrivacy } from './tests/e2e/aws-artifact-privacy.js';
 
 // Playwright captures failure-page ARIA snapshots independently of trace/video/screenshot.
 // Set its upstream opt-out during config evaluation, before any AWS worker can enter credentials.
-if (process.env.PORTAL_E2E_AWS === '1') process.env.PLAYWRIGHT_NO_COPY_PROMPT = '1';
+if (process.env.PORTAL_E2E_AWS === '1') {
+  assertAwsRunnerPrivacy();
+  process.env.PLAYWRIGHT_NO_COPY_PROMPT = '1';
+}
 
 export default defineConfig({
   testDir: './tests/e2e',
