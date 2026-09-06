@@ -47,3 +47,44 @@ curl -i http://127.0.0.1:3001/api/me -H 'X-Local-Actor: patient-a'
 ```
 
 Stop the process with Ctrl-C. It closes both the HTTP listener and its PostgreSQL pool.
+
+## Run the React portal
+
+With the API still running, start the web app in another terminal using Node 24:
+
+```sh
+nvm use
+corepack pnpm@11.22.0 --filter @portal/web dev
+```
+
+Open `http://127.0.0.1:5173`. Choose a fictional development identity and select
+**Sign in**. The selector can also switch identities after sign-in; private queries
+and mutations are cleared before the next identity's pages mount. Vite serves local
+`/config.json` only in development and proxies `/api` to port 3001.
+
+The deployed app loads `/config.json` before mounting React. Production requires:
+
+```json
+{
+  "mode": "cognito",
+  "apiBaseUrl": "/api",
+  "issuer": "https://cognito-idp.eu-north-1.amazonaws.com/USER_POOL_ID",
+  "clientId": "PUBLIC_APP_CLIENT_ID",
+  "cognitoDomain": "https://DOMAIN.auth.eu-north-1.amazoncognito.com",
+  "redirectUri": "https://FRONTEND_DOMAIN/auth/callback",
+  "logoutUri": "https://FRONTEND_DOMAIN/signed-out"
+}
+```
+
+These are public deployment identifiers, with no client secret. The callback and
+logout origins must match the frontend. Deployment creates this file from stack
+outputs; the development config is never copied into the production build. Tokens
+and users stay in memory; only temporary OIDC redirect transaction state uses
+sessionStorage. A full reload may require sign-in again. Cognito logout uses its
+`/logout?client_id=...&logout_uri=...` endpoint after local session/cache clearing.
+
+Run `corepack pnpm@11.22.0 --filter @portal/web build` for type checking, the Vite
+production build, and its local-auth artifact guard. `corepack pnpm@11.22.0 test
+apps/web` runs the web tests, including a deliberately contaminated artifact fixture.
+The shared UI primitives use the Radix family consistently (button/Slot, Dialog,
+and form Label/Slot), with Tailwind semantic color and spacing tokens.
