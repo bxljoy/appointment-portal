@@ -1,0 +1,76 @@
+import type {
+  DeploymentManifest,
+  InventoryAdapter,
+  InventoryPage,
+  ResourceRecord,
+} from '../lifecycle-types.js';
+import type { AwsClients } from '../aws-lifecycle.js';
+
+export const manifest: DeploymentManifest = {
+  account: '111111111111',
+  region: 'eu-north-1',
+  projectTag: 'appointment-portal',
+  appStack: 'AppointmentPortal',
+  deliveryStack: 'AppointmentPortalDelivery',
+  toolkitStack: 'AppointmentPortalToolkit',
+  qualifier: 'apptdemo',
+  phase: 'ready',
+  outputs: { FrontendUrl: 'https://demo.cloudfront.net' },
+  resources: [],
+};
+
+type InventoryFixture = Record<string, ResourceRecord[]>;
+
+export const fakeInventory = (fixture: InventoryFixture, pageSize = 1): InventoryAdapter & {
+  deleted: string[];
+  archived: DeploymentManifest[];
+  stackDeletes: string[];
+} => {
+  const resources = Object.values(fixture).flat();
+  const deleted: string[] = [];
+  const archived: DeploymentManifest[] = [];
+  const stackDeletes: string[] = [];
+  return {
+    deleted,
+    archived,
+    stackDeletes,
+    async account() { return manifest.account; },
+    async page(cursor): Promise<InventoryPage> {
+      const start = cursor === undefined ? 0 : Number(cursor);
+      const items = resources.slice(start, start + pageSize);
+      const nextCursor = start + pageSize < resources.length ? String(start + pageSize) : undefined;
+      return { items, nextCursor };
+    },
+    async deleteStack(name) { stackDeletes.push(name); },
+    async waitStackDeleted() {},
+    async deleteResource(resource) { deleted.push(`${resource.type}:${resource.id}`); },
+    async archive(input) { archived.push(structuredClone(input)); },
+  };
+};
+
+export const fakeAwsClients = (pages: Record<string, unknown[]> = {}): AwsClients => {
+  const positions = new Map<string, number>();
+  const send = async (command: object) => {
+    const name = command.constructor.name;
+    if (name === 'ListStackResourcesCommand') throw Object.assign(new Error('stack absent'), { name: 'ValidationError' });
+    if (name === 'GetParameterCommand') throw Object.assign(new Error('parameter absent'), { name: 'ParameterNotFound' });
+    const defaults: Record<string, unknown> = {
+      DescribeDBSnapshotsCommand: { DBSnapshots: [] }, DescribeDBInstancesCommand: { DBInstances: [] },
+      DescribeDBProxiesCommand: { DBProxies: [] }, DescribeDBInstanceAutomatedBackupsCommand: { DBInstanceAutomatedBackups: [] },
+      ListSecretsCommand: { SecretList: [] }, DescribeLogGroupsCommand: { logGroups: [] },
+      DescribeVpcEndpointsCommand: { VpcEndpoints: [] }, DescribeNetworkInterfacesCommand: { NetworkInterfaces: [] },
+      DescribeRepositoriesCommand: { repositories: [] }, ListOpenIDConnectProvidersCommand: { OpenIDConnectProviderList: [] },
+      GetCallerIdentityCommand: { Account: manifest.account },
+    };
+    const candidates = pages[name];
+    if (!candidates) return defaults[name] ?? {};
+    const position = positions.get(name) ?? 0;
+    positions.set(name, position + 1);
+    return candidates[position] ?? candidates.at(-1) ?? defaults[name] ?? {};
+  };
+  const client = { send };
+  return {
+    cloudformation: client, cloudfront: client, ec2: client, ecr: client, iam: client, lambda: client,
+    rds: client, s3: client, secrets: client, ssm: client, sts: client, logs: client, cognito: client,
+  } as unknown as AwsClients;
+};

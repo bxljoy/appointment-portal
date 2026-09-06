@@ -2,6 +2,7 @@
 import { App } from 'aws-cdk-lib';
 import { parsePortalConfig } from '../lib/config.js';
 import { PortalStack } from '../lib/portal-stack.js';
+import { DeliveryStack } from '../lib/delivery-stack.js';
 
 const app = new App();
 const config = parsePortalConfig({
@@ -15,3 +16,16 @@ const config = parsePortalConfig({
 new PortalStack(app, 'AppointmentPortal', {
   env: { account: config.account, region: config.region }, config,
 });
+const repository = app.node.tryGetContext('repository') as unknown;
+if (repository !== undefined) {
+  const branch = app.node.tryGetContext('branch') as unknown;
+  const oidcProviderArn = app.node.tryGetContext('oidcProviderArn') as unknown;
+  if (typeof repository !== 'string' || typeof branch !== 'string' || (oidcProviderArn !== undefined && typeof oidcProviderArn !== 'string')) {
+    throw new Error('Delivery context requires repository and branch strings plus an optional OIDC provider ARN.');
+  }
+  new DeliveryStack(app, 'AppointmentPortalDelivery', {
+    env: { account: config.account, region: config.region },
+    repository, branch, ...(oidcProviderArn ? { oidcProviderArn } : {}),
+    qualifier: 'apptdemo', projectTag: 'appointment-portal',
+  });
+}

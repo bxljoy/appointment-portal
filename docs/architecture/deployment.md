@@ -2,9 +2,33 @@
 
 The CDK application is in `infra/`. It provisions the private data foundation,
 Cognito identity, three feature Lambdas, an HTTP API, the CloudFront/S3 frontend,
-and bounded operational resources. Migration execution, frontend publication,
-and lifecycle commands are added by subsequent implementation tasks. No deployment
-is performed by tests.
+and bounded operational resources. Migration execution, frontend publication, and
+lifecycle commands live in `scripts/`. Tests inject every cloud and process boundary;
+they never deploy or contact AWS.
+
+## Lifecycle control plane
+
+`.runtime/deployment.json` is the recovery record. It stores account, Region, phase,
+stack names, outputs, and owned/shared resource IDs after each successful phase. It
+contains no keys, tokens, passwords, secret values, or browser state. A resumed ready
+deployment migrates in place and cannot switch the proxy back to administrator auth.
+
+CDK runs through executable/argument arrays with `shell: false`; cloud inspection,
+migration, publication, and inventory use AWS SDK v3 clients. The publisher checks
+the actual Cognito callback against CloudFront, uploads immutable content hashes
+first, publishes public config and shell with `no-cache`, and waits for invalidation.
+
+DeliveryStack uses exact audience `sts.amazonaws.com` and subject
+`repo:OWNER/REPOSITORY:environment:demo`. GitHub environment policy supplies the
+branch boundary because an environment claim replaces the ref form of `sub`.
+Deployment assumes only `apptdemo` bootstrap roles. CloudFormation's execution role
+owns template provisioning authority; runtime roles remain feature-scoped.
+
+Cleanup uses the saved inventory as its ownership ceiling and refreshes paginated
+service inventories after stack deletion. Application cleanup happens first.
+Project-exclusive delivery/bootstrap removal needs explicit `--all` under local
+credentials and happens last. Scheduled secrets and shared OIDC providers remain
+separate from active owned leftovers.
 
 ## Configuration and offline synthesis
 
