@@ -1,13 +1,23 @@
 # Run the local API
 
-Use Node 24.0.1 and pnpm 11.22.0:
+From the repository root, use the Node version recorded in `.nvmrc` and pnpm 11.22.0:
 
 ```sh
-export PATH=/Users/bxl/.nvm/versions/node/v24.0.1/bin:$PATH
+nvm use
 corepack pnpm@11.22.0 --version
 ```
 
-Start the PostgreSQL 17 container, then migrate and seed the local database:
+Load the repository's Compose connection string into the current shell. Keep this
+shell open for migration, seed, and API commands below:
+
+```sh
+set -a
+. ./.env.example
+set +a
+```
+
+Start the PostgreSQL 17 container, then migrate and seed the local database at the
+Compose endpoint `127.0.0.1:54329`:
 
 ```sh
 docker compose up -d postgres

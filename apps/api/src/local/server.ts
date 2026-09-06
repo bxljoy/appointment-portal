@@ -5,16 +5,17 @@ import { resolve } from 'node:path';
 
 import { Pool } from 'pg';
 
-import { handleAppointments } from '../modules/appointments/routes.js';
+import { handleAppointments, ownsAppointmentsPath } from '../modules/appointments/routes.js';
 import { makeAppointmentsService } from '../modules/appointments/service.js';
-import { handleAvailability } from '../modules/availability/routes.js';
+import { handleAvailability, ownsAvailabilityPath } from '../modules/availability/routes.js';
 import { makeAvailabilityService } from '../modules/availability/service.js';
-import { handleProfiles } from '../modules/profiles/routes.js';
+import { handleProfiles, ownsProfilesPath } from '../modules/profiles/routes.js';
 import { makeProfilesService } from '../modules/profiles/service.js';
 import {
   parseJsonBody,
   parseQuery,
   respondError,
+  routeNotFound,
   type HttpRequest,
   type HttpResponse,
 } from '../shared/http.js';
@@ -102,11 +103,10 @@ const handleRequest = async (
 };
 
 const route = async (request: HttpRequest, services: LocalServices): Promise<HttpResponse> => {
-  const profileResponse = await handleProfiles(request, services.profiles);
-  if (profileResponse.statusCode !== 404) return profileResponse;
-  const availabilityResponse = await handleAvailability(request, services.availability);
-  if (availabilityResponse.statusCode !== 404) return availabilityResponse;
-  return handleAppointments(request, services.appointments);
+  if (ownsProfilesPath(request.path)) return handleProfiles(request, services.profiles);
+  if (ownsAvailabilityPath(request.path)) return handleAvailability(request, services.availability);
+  if (ownsAppointmentsPath(request.path)) return handleAppointments(request, services.appointments);
+  return routeNotFound(request.requestId);
 };
 
 const readIncomingBody = async (request: IncomingMessage): Promise<Buffer | undefined> => {

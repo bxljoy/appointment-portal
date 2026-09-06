@@ -81,6 +81,47 @@ describe('local API', () => {
     });
   });
 
+  it('rejects inherited property names as local identities', async () => {
+    await withLocalServer(async ({ baseUrl }) => {
+      for (const value of ['constructor', 'toString', '__proto__']) {
+        const response = await fetch(`${baseUrl}/api/me`, {
+          headers: { 'X-Local-Actor': value },
+        });
+
+        expect(response.status).toBe(401);
+        await expect(response.json()).resolves.toMatchObject({
+          error: { code: 'UNAUTHENTICATED', message: 'Authentication is required.' },
+        });
+      }
+    });
+  });
+
+  it('accepts each fixed local identity', async () => {
+    await withLocalServer(async ({ baseUrl }) => {
+      const responses = await Promise.all(
+        ['patient-a', 'patient-b', 'clinician-a', 'clinician-b'].map((value) => fetch(`${baseUrl}/api/me`, {
+          headers: { 'X-Local-Actor': value },
+        })),
+      );
+
+      expect(responses.map((response) => response.status)).toEqual([200, 200, 200, 200]);
+    });
+  });
+
+  it('keeps a matched profile resource-not-found response intact', async () => {
+    await withLocalServer(async ({ baseUrl }) => {
+      const response = await fetch(
+        `${baseUrl}/api/clinicians/00000000-0000-4000-8000-000000000000`,
+        { headers: { 'X-Local-Actor': 'patient-a' } },
+      );
+
+      expect(response.status).toBe(404);
+      await expect(response.json()).resolves.toMatchObject({
+        error: { code: 'NOT_FOUND', message: 'Clinician not found.' },
+      });
+    });
+  });
+
   it('enforces the 16 KiB body limit before route parsing', async () => {
     await withLocalServer(async ({ baseUrl }) => {
       const response = await fetch(`${baseUrl}/api/appointments`, {

@@ -16,6 +16,9 @@ import type { ProfilesService } from '../../shared/types.js';
 
 const idSchema = z.uuid();
 
+export const ownsProfilesPath = (path: string): boolean =>
+  path === '/api/me' || path === '/api/clinicians' || /^\/api\/clinicians\/[^/]+$/.test(path);
+
 export const handleProfiles = async (
   request: HttpRequest,
   service: ProfilesService,

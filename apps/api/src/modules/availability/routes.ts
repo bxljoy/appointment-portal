@@ -18,6 +18,11 @@ import type { Clock } from '../../shared/types.js';
 const idSchema = z.uuid();
 const DEFAULT_WINDOW_DURATION_MS = 7 * 24 * 60 * 60 * 1_000;
 
+export const ownsAvailabilityPath = (path: string): boolean =>
+  path === '/api/availability' ||
+  /^\/api\/clinicians\/[^/]+\/slots$/.test(path) ||
+  /^\/api\/availability\/[^/]+\/withdraw$/.test(path);
+
 export const handleAvailability = async (
   request: HttpRequest,
   service: AvailabilityService,

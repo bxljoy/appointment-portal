@@ -16,6 +16,9 @@ import type { AppointmentsService } from '../../shared/types.js';
 
 const idSchema = z.uuid();
 
+export const ownsAppointmentsPath = (path: string): boolean =>
+  path === '/api/appointments' || /^\/api\/appointments\/[^/]+\/cancel$/.test(path);
+
 export const handleAppointments = async (
   request: HttpRequest,
   service: AppointmentsService,
