@@ -24,7 +24,7 @@ async function reconcileBooking(api: ReturnType<typeof useApiClient>, slotId: st
     const page = await api(`/appointments?${query}`, {}, AppointmentPageSchema);
     if (page.items.some((appointment) => appointment.slotId === slotId && appointment.status === 'booked')) return 'confirmed';
     const nextCursor = page.nextCursor;
-    if (!nextCursor) return 'not-confirmed';
+    if (nextCursor === null) return 'not-confirmed';
     if (!nextCursor.trim() || seenCursors.has(nextCursor)) throw new BookingReconciliationError();
     seenCursors.add(nextCursor);
     cursor = nextCursor;

@@ -135,6 +135,24 @@ describe('patient appointment journeys', () => {
     expect(appointmentsReads).toBe(2);
   });
 
+  it('fails safely when appointment reconciliation returns an empty cursor', async () => {
+    let appointmentsReads = 0;
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), 'https://portal.test');
+      if (url.pathname === '/api/me') return Promise.resolve(response(me));
+      if (url.pathname === `/api/clinicians/${ids.clinician}`) return Promise.resolve(response(clinician));
+      if (url.pathname === `/api/clinicians/${ids.clinician}/slots`) return Promise.resolve(response({ items: [slot], nextCursor: null }));
+      if (url.pathname === '/api/appointments' && init?.method === 'POST') return Promise.reject(new TypeError('offline'));
+      if (url.pathname === '/api/appointments') { appointmentsReads += 1; return Promise.resolve(response({ items: [], nextCursor: '' })); }
+      throw new Error(`Unexpected request ${url.pathname}`);
+    }));
+    const portal = renderPortalPage(<AppRoutes />, { initialEntry: `/clinicians/${ids.clinician}?date=2030-01-15` });
+    await portal.user.click(await screen.findByRole('button', { name: 'Book appointment' }));
+    expect(await screen.findByText('We could not determine whether your booking was created.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Book appointment' })).toBeDisabled();
+    expect(appointmentsReads).toBe(1);
+  });
+
   it('accumulates appointment cursor pages without a duplicate next-page action', async () => {
     let resolveSecond: ((value: Response) => void) | undefined;
     vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -175,6 +193,30 @@ describe('patient appointment journeys', () => {
     expect(await screen.findByText('Cancelled')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Appointment history' })).toHaveFocus();
     expect(trigger).not.toBeInTheDocument();
+  });
+
+  it('restores history focus when cache publication removes the dialog before a delayed refetch settles', async () => {
+    let appointmentReads = 0;
+    let resolveRefetch: ((value: Response) => void) | undefined;
+    const cancelledAppointment: Appointment = { ...appointment, status: 'cancelled', cancelledAt: '2029-12-01T10:00:00.000Z', cancelledBy: ids.patient };
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), 'https://portal.test');
+      if (url.pathname === '/api/me') return Promise.resolve(response(me));
+      if (url.pathname === '/api/appointments' && !init?.method) {
+        appointmentReads += 1;
+        return appointmentReads === 1 ? Promise.resolve(response({ items: [appointment], nextCursor: null })) : new Promise<Response>((resolve) => { resolveRefetch = resolve; });
+      }
+      if (url.pathname === `/api/appointments/${ids.appointment}/cancel`) return Promise.resolve(response(cancelledAppointment));
+      throw new Error(`Unexpected request ${url.pathname}`);
+    }));
+    const portal = renderPortalPage(<AppRoutes />, { initialEntry: '/appointments' });
+    await portal.user.click(await screen.findByRole('button', { name: 'Cancel appointment with Dr. Ada Lovelace' }));
+    await portal.user.click(screen.getByRole('button', { name: 'Confirm cancellation' }));
+    expect(await screen.findByText('Cancelled')).toBeInTheDocument();
+    await waitFor(() => expect(resolveRefetch).toBeDefined());
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Appointment history' })).toHaveFocus();
+    resolveRefetch?.(response({ items: [cancelledAppointment], nextCursor: null }));
   });
 
   it('moves a cancelled appointment from an earlier accumulated page into history', async () => {

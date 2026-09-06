@@ -10,12 +10,13 @@ export function CancelDialog({ appointment, onCancelled, onRestoreFocus }: { app
   const shouldRestoreFallbackFocus = useRef(false);
   const cancellation = useCancelAppointment();
   const cancel = async () => {
+    shouldRestoreFallbackFocus.current = true;
     try {
       const cancelledAppointment = await cancellation.mutateAsync({ appointmentId: appointment.id, withdrawSlot: false });
-      shouldRestoreFallbackFocus.current = true;
       onCancelled(cancelledAppointment);
       setOpen(false);
     } catch {
+      shouldRestoreFallbackFocus.current = false;
       // The server result remains authoritative. Keep the dialog open with a retryable error.
     }
   };
