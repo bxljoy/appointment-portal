@@ -1,4 +1,15 @@
-import type { Clinician, CreateSlotInput, Me, Page, PageQuery, Slot, WindowQuery } from '@portal/contracts';
+import type {
+  Appointment,
+  BookInput,
+  CancelInput,
+  Clinician,
+  CreateSlotInput,
+  Me,
+  Page,
+  PageQuery,
+  Slot,
+  WindowQuery,
+} from '@portal/contracts';
 import type { Pool } from 'pg';
 
 export type Actor = { sub: string };
@@ -21,4 +32,10 @@ export type AvailabilityService = {
   listOwn(actor: Actor, query: WindowQuery): Promise<Page<Slot>>;
   create(actor: Actor, input: CreateSlotInput): Promise<Slot>;
   withdraw(actor: Actor, slotId: string): Promise<Slot>;
+};
+
+export type AppointmentsService = {
+  list(actor: Actor, query: PageQuery): Promise<Page<Appointment>>;
+  book(actor: Actor, input: BookInput): Promise<Appointment>;
+  cancel(actor: Actor, appointmentId: string, input: CancelInput): Promise<Appointment>;
 };
