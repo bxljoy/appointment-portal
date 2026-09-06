@@ -21,8 +21,8 @@ test('serializes concurrent migrators and applies each migration once', async ()
       migrate(pool, migrationsDirectory),
     ]);
 
-    expect(results.flat()).toEqual(['001_initial.sql']);
-    await expect(pool.query('SELECT name FROM schema_migrations')).resolves.toMatchObject({ rowCount: 1 });
+    expect(results.flat()).toEqual(['001_initial.sql', '002_default_patient_role.sql']);
+    await expect(pool.query('SELECT name FROM schema_migrations')).resolves.toMatchObject({ rowCount: 2 });
   });
 });
 
@@ -98,6 +98,6 @@ test('rolls back a failed afterMigrate callback independently of the schema migr
     await expect(
       pool.query("SELECT to_regclass('public.callback_setup') AS name"),
     ).resolves.toMatchObject({ rows: [{ name: null }] });
-    await expect(pool.query('SELECT name FROM schema_migrations')).resolves.toMatchObject({ rowCount: 1 });
+    await expect(pool.query('SELECT name FROM schema_migrations')).resolves.toMatchObject({ rowCount: 2 });
   });
 });
