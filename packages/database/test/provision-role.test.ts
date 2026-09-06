@@ -48,6 +48,41 @@ test('repeated provisioning safely quotes a password and confines the fixed logi
   });
 });
 
+test('fresh disposable databases contain only the known migration-owned tables and no sequence or custom defaults', async () => {
+  await withTestDb(async (pool) => {
+    await expect(pool.query(`SELECT c.relname AS name, c.relowner = current_user::regrole AS owned
+      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public' AND c.relkind IN ('r', 'S') ORDER BY c.relname`))
+      .resolves.toMatchObject({ rows: ['appointments', 'availability_slots', 'clinician_profiles', 'schema_migrations', 'users']
+        .map((name) => ({ name, owned: true })) });
+    await expect(pool.query(`SELECT count(*)::int AS count FROM pg_default_acl
+      WHERE defaclrole = current_user::regrole AND defaclobjtype IN ('r', 'S')`))
+      .resolves.toMatchObject({ rows: [{ count: 0 }] });
+  });
+});
+
+test('real app credentials cannot create temporary tables or schemas through fresh PUBLIC or stale direct database grants', async () => {
+  await withTestDb(async (pool) => {
+    const password = 'test-only-database-privileges-password';
+    const database = (await pool.query('SELECT current_database() AS name')).rows[0].name;
+    // PostgreSQL's fresh database ACL gives every login TEMPORARY through PUBLIC.
+    await expect(pool.query("SELECT has_database_privilege('portal_app',current_database(),'TEMPORARY') AS allowed"))
+      .resolves.toMatchObject({ rows: [{ allowed: true }] });
+    for (const staleGrants of [false, true]) {
+      if (staleGrants) await pool.query(format('GRANT CREATE, TEMPORARY ON DATABASE %I TO PUBLIC, portal_app', database));
+      await migrate(pool, directory, (client) => provisionAppRole(client, password));
+      await asApplication(pool, password, async (app) => {
+        await expect(app.query('CREATE TEMP TABLE forbidden_temp(id int)')).rejects.toMatchObject({ code: '42501' });
+        await expect(app.query('CREATE SCHEMA forbidden_schema')).rejects.toMatchObject({ code: '42501' });
+        await expect(app.query(`SELECT has_database_privilege(current_user,current_database(),'CONNECT') AS connect,
+          has_database_privilege(current_user,current_database(),'CREATE') AS create,
+          has_database_privilege(current_user,current_database(),'TEMPORARY') AS temporary`))
+          .resolves.toMatchObject({ rows: [{ connect: true, create: false, temporary: false }] });
+      });
+    }
+  });
+});
+
 test('real application credentials can perform the profile, directory, slot and booking workflow', async () => {
   await withTestDb(async (pool) => {
     const password = 'test-only-crud-password';
@@ -69,14 +104,17 @@ test('real application credentials can perform the profile, directory, slot and 
   });
 });
 
-test('revokes PUBLIC creation and denies role escalation, protected columns, deletion and clinician writes', async () => {
+test('revokes direct and PUBLIC table, column and sequence grants to deny escalation and protected writes', async () => {
   await withTestDb(async (pool) => {
     const password = 'test-only-privileges-password';
     const { patient, clinician, slot } = await seedScenario(pool);
     await pool.query('GRANT CREATE ON SCHEMA public TO PUBLIC');
-    // Existing broader direct grants must be tightened by every provision run.
-    await pool.query('GRANT ALL ON ALL TABLES IN SCHEMA public TO portal_app');
-    await pool.query('GRANT UPDATE(role), INSERT(role) ON users TO portal_app');
+    // Both direct and inherited grants must be tightened by every provision run.
+    await pool.query('GRANT ALL ON ALL TABLES IN SCHEMA public TO portal_app, PUBLIC');
+    await pool.query('GRANT UPDATE(role), INSERT(role) ON users TO portal_app, PUBLIC');
+    await pool.query('GRANT SELECT(name) ON schema_migrations TO portal_app, PUBLIC');
+    await pool.query('CREATE SEQUENCE privilege_probe');
+    await pool.query('GRANT ALL ON SEQUENCE privilege_probe TO portal_app, PUBLIC');
     await migrate(pool, directory, (client) => provisionAppRole(client, password));
     await asApplication(pool, password, async (app) => {
       for (const [sql, values] of [
@@ -88,6 +126,8 @@ test('revokes PUBLIC creation and denies role escalation, protected columns, del
         ['DELETE FROM users WHERE id=$1', [patient.id]],
         ['UPDATE availability_slots SET clinician_id=$1 WHERE id=$2', [clinician.id, slot.id]],
         ['SELECT * FROM schema_migrations', []],
+        ['SELECT name FROM schema_migrations', []],
+        ["SELECT nextval('privilege_probe')", []],
       ] as [string, string[]][]) await expect(app.query(sql, values)).rejects.toMatchObject({ code: '42501' });
       await expect(app.query("SELECT has_database_privilege(current_user,current_database(),'CONNECT') AS connect, has_schema_privilege(current_user,'public','USAGE') AS usage"))
         .resolves.toMatchObject({ rows: [{ connect: true, usage: true }] });
@@ -95,9 +135,35 @@ test('revokes PUBLIC creation and denies role escalation, protected columns, del
   });
 });
 
-test('a failure after grants rolls back the entire migration batch, role password and PUBLIC grants', async () => {
+test('future migration-owned objects receive no PUBLIC privileges from global or schema defaults and no automatic app grants', async () => {
+  await withTestDb(async (pool) => {
+    const password = 'test-only-default-privileges-password';
+    // Schema revocations alone cannot negate PostgreSQL's additive global defaults.
+    await pool.query(`
+      ALTER DEFAULT PRIVILEGES GRANT ALL ON TABLES TO PUBLIC;
+      ALTER DEFAULT PRIVILEGES GRANT ALL ON SEQUENCES TO PUBLIC;
+      ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO PUBLIC;
+      ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO PUBLIC;
+    `);
+    await migrate(pool, directory, (client) => provisionAppRole(client, password));
+    await pool.query('CREATE TABLE future_table(id int); CREATE SEQUENCE future_sequence');
+    await asApplication(pool, password, async (app) => {
+      await expect(app.query('SELECT * FROM future_table')).rejects.toMatchObject({ code: '42501' });
+      await expect(app.query('INSERT INTO future_table(id) VALUES (1)')).rejects.toMatchObject({ code: '42501' });
+      await expect(app.query("SELECT nextval('future_sequence')")).rejects.toMatchObject({ code: '42501' });
+    });
+  });
+});
+
+test('a failure after grants rolls back migrations, role password, database privileges and owner defaults together', async () => {
   await withEmptyTestDb(async (pool) => {
+    const database = (await pool.query('SELECT current_database() AS name')).rows[0].name;
+    await pool.query(format('GRANT CREATE, TEMPORARY ON DATABASE %I TO PUBLIC, portal_app', database));
     await pool.query('GRANT CREATE ON SCHEMA public TO PUBLIC');
+    await pool.query('ALTER DEFAULT PRIVILEGES GRANT SELECT ON TABLES TO PUBLIC');
+    await pool.query('ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE ON SEQUENCES TO PUBLIC');
+    const priorDatabaseAcl = (await pool.query('SELECT datacl::text AS acl FROM pg_database WHERE datname=current_database()')).rows[0].acl;
+    const priorDefaults = (await pool.query('SELECT defaclnamespace, defaclobjtype, defaclacl::text FROM pg_default_acl ORDER BY defaclnamespace, defaclobjtype')).rows;
     await pool.query(format('ALTER ROLE portal_app PASSWORD %L', 'test-only-before-rollback'));
     const prior = (await pool.query("SELECT rolpassword FROM pg_authid WHERE rolname='portal_app'")).rows[0].rolpassword;
     await expect(migrate(pool, directory, async (client) => {
@@ -105,6 +171,8 @@ test('a failure after grants rolls back the entire migration batch, role passwor
       await expect(client.query('SELECT count(*)::int AS count FROM pg_locks WHERE pid=pg_backend_pid() AND locktype=\'advisory\' AND granted'))
         .resolves.toMatchObject({ rows: [{ count: 1 }] });
       await provisionAppRole(client, 'test-only-after-rollback');
+      await expect(client.query("SELECT has_database_privilege('portal_app',current_database(),'TEMPORARY') AS allowed"))
+        .resolves.toMatchObject({ rows: [{ allowed: false }] });
       throw new Error('injected grant failure');
     })).rejects.toThrow('injected grant failure');
     await expect(pool.query("SELECT to_regclass('public.users') AS users, to_regclass('public.schema_migrations') AS ledger"))
@@ -112,20 +180,22 @@ test('a failure after grants rolls back the entire migration batch, role passwor
     expect((await pool.query("SELECT rolpassword FROM pg_authid WHERE rolname='portal_app'")).rows[0].rolpassword).toBe(prior);
     await expect(pool.query("SELECT has_schema_privilege('portal_app','public','CREATE') AS allowed"))
       .resolves.toMatchObject({ rows: [{ allowed: true }] });
+    expect((await pool.query('SELECT datacl::text AS acl FROM pg_database WHERE datname=current_database()')).rows[0].acl).toBe(priorDatabaseAcl);
+    expect((await pool.query('SELECT defaclnamespace, defaclobjtype, defaclacl::text FROM pg_default_acl ORDER BY defaclnamespace, defaclobjtype')).rows).toEqual(priorDefaults);
     await expect(migrate(pool, directory, (client) => provisionAppRole(client, 'test-only-retry')))
       .resolves.toEqual(['001_initial.sql', '002_default_patient_role.sql']);
   });
 });
 
-test('can provision with a nonsuperuser schema owner like the RDS administrator', async () => {
+test('can provision with a nonsuperuser database and schema owner like the RDS administrator', async () => {
   const owner = `portal_setup_test_${randomUUID().replaceAll('-', '')}`;
   await roleAdmin.query(format('CREATE ROLE %I NOLOGIN NOSUPERUSER CREATEDB CREATEROLE', owner));
   try {
     if (createdRole) await roleAdmin.query('DROP ROLE portal_app');
     await withEmptyTestDb(async (pool) => {
       const database = (await pool.query('SELECT current_database() AS name')).rows[0].name;
+      await pool.query(format('ALTER DATABASE %I OWNER TO %I', database, owner));
       await pool.query(format('ALTER SCHEMA public OWNER TO %I', owner));
-      await pool.query(format('GRANT CREATE, CONNECT ON DATABASE %I TO %I', database, owner));
       if (!createdRole) await pool.query(format('GRANT portal_app TO %I WITH ADMIN OPTION', owner));
       const url = new URL(connectionString); url.pathname = `/${database}`;
       const ownerPool = new Pool({ connectionString: url.toString(), max: 1 });
@@ -134,6 +204,11 @@ test('can provision with a nonsuperuser schema owner like the RDS administrator'
         await expect(migrate(ownerPool, directory, (client) => provisionAppRole(client, 'Rds-like-test-password!234')))
           .resolves.toEqual(['001_initial.sql', '002_default_patient_role.sql']);
         await expect(migrate(ownerPool, directory, (client) => provisionAppRole(client, 'Rds-like-test-password!234'))).resolves.toEqual([]);
+        await asApplication(pool, 'Rds-like-test-password!234', async (app) => {
+          await expect(app.query('CREATE TEMP TABLE forbidden_temp(id int)')).rejects.toMatchObject({ code: '42501' });
+          await expect(app.query("INSERT INTO users(cognito_sub,display_name) VALUES ('rds-patient','Patient') RETURNING role"))
+            .resolves.toMatchObject({ rows: [{ role: 'patient' }] });
+        });
       } finally { await ownerPool.end(); }
     });
   } finally { await roleAdmin.query(format('DROP ROLE %I', owner)); }

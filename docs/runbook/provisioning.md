@@ -29,10 +29,34 @@ SELECT on the four application tables, and only these write columns:
 | availability_slots | clinician_id, start_at, end_at | status |
 | appointments | slot_id, patient_id, status | status, cancelled_at, cancelled_by |
 
-There are no DELETE, schema ledger, schema CREATE, or future-object default grants.
-UUID defaults require no sequences. Provisioning revokes existing direct table,
-column, and sequence grants before applying this allowlist, and removes PUBLIC's
-CREATE on `public`. Roles in application rows remain enforced by the services.
+Provisioning grants no DELETE, schema ledger access, or future-object privileges.
+It revokes database CREATE and TEMPORARY from both PUBLIC and `portal_app` before
+granting CONNECT. Revoking schema CREATE alone would still allow temporary tables
+through PostgreSQL's [default PUBLIC TEMPORARY grant](https://www.postgresql.org/docs/17/ddl-priv.html). It also removes PUBLIC's
+CREATE on `public`, and revokes existing direct and PUBLIC table, column, and
+sequence grants before applying the allowlist. UUID defaults require no sequences.
+Roles in application rows remain enforced by the services.
+
+This setup assumes a **fresh, disposable, dedicated portal database** owned by the
+migration administrator. The same administrator owns every migrated object in
+`public`; tests assert the known four application tables plus the migration ledger,
+no sequences, and no custom table/sequence default privileges on a fresh database.
+Retries reconcile existing table and sequence privileges throughout that dedicated
+schema, including the ledger. PostgreSQL's table revocations also remove the
+corresponding column grants; setup explicitly resets the known application columns.
+Do not reuse this procedure for a shared database or schema.
+
+Setup also revokes PUBLIC table and sequence defaults for the current migration
+owner, both globally within this database and specifically in `public`. PostgreSQL
+adds schema defaults to global defaults, so a schema-only revocation cannot undo a
+global grant ([ALTER DEFAULT PRIVILEGES](https://www.postgresql.org/docs/17/sql-alterdefaultprivileges.html)). These statements need no superuser privilege and run in the same
+locked transaction as migrations and the other grants. New tables or sequences
+require an explicit privilege review; setup gives `portal_app` no blanket default
+DML. The fresh-database assumption excludes pre-existing custom defaults granting
+directly to `portal_app`. Defaults belonging to other object-creating roles, other
+schemas' specific defaults, other databases, and subsequent external administrator
+changes are outside this setup's reconciliation scope.
+
 Creation sets the safe role flags explicitly. Retries refuse an unexpectedly
 privileged role or role membership, then update only attributes an RDS administrator
 may change: RDS administrators are not PostgreSQL SUPERUSERs, and even an explicit
