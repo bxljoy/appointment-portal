@@ -10,7 +10,14 @@ import {
 import { AppError } from '../../shared/errors.js';
 import type { Actor, AvailabilityService, ServicesDeps } from '../../shared/types.js';
 import { ensureUser } from '../profiles/repository.js';
-import { findOwnSlots, findPublicSlots, insertSlot, lockSlot, withdrawSlot } from './repository.js';
+import {
+  findOwnSlots,
+  findPublicSlots,
+  hasBookedAppointment,
+  insertSlot,
+  lockSlot,
+  withdrawSlot,
+} from './repository.js';
 
 export const makeAvailabilityService = (deps: ServicesDeps): AvailabilityService => ({
   async listPublic(actor, clinicianId, query) {
@@ -55,14 +62,15 @@ export const makeAvailabilityService = (deps: ServicesDeps): AvailabilityService
       if (!slot || slot.clinicianId !== clinician.id) {
         throw new AppError(404, 'NOT_FOUND', 'Availability slot not found.');
       }
+      const isBooked = await hasBookedAppointment(client, slot.id);
       if (slot.status === 'withdrawn') {
         await client.query('COMMIT');
-        return slot;
+        return { ...slot, isBooked };
       }
       if (new Date(slot.startAt).getTime() <= deps.clock().getTime()) {
         throw new AppError(409, 'SLOT_UNAVAILABLE', 'Only future availability slots can be withdrawn.');
       }
-      if (slot.isBooked) {
+      if (isBooked) {
         throw new AppError(409, 'SLOT_UNAVAILABLE', 'Booked availability slots cannot be withdrawn.');
       }
       const withdrawn = await withdrawSlot(client, slot.id);

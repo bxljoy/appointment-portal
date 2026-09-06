@@ -10,6 +10,10 @@ type SlotRow = {
   is_booked: boolean;
 };
 
+type LockedSlotRow = Omit<SlotRow, 'is_booked'>;
+
+export type LockedSlot = Omit<Slot, 'isBooked'>;
+
 const slotColumns = `
   s.id,
   s.clinician_id,
@@ -91,16 +95,28 @@ export const findOwnSlots = async (
   return result.rows.map(toSlot);
 };
 
-export const lockSlot = async (client: PoolClient, slotId: string): Promise<Slot | undefined> => {
-  const result = await client.query<SlotRow>(
-    `SELECT ${slotColumns}
+export const lockSlot = async (client: PoolClient, slotId: string): Promise<LockedSlot | undefined> => {
+  const result = await client.query<LockedSlotRow>(
+    `SELECT s.id, s.clinician_id, s.start_at, s.end_at, s.status
      FROM availability_slots s
      WHERE s.id = $1
      FOR UPDATE OF s`,
     [slotId],
   );
   const row = result.rows[0];
-  return row ? toSlot(row) : undefined;
+  return row ? toLockedSlot(row) : undefined;
+};
+
+export const hasBookedAppointment = async (client: PoolClient, slotId: string): Promise<boolean> => {
+  const result = await client.query<{ is_booked: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1
+       FROM appointments
+       WHERE slot_id = $1 AND status = 'booked'
+     ) AS is_booked`,
+    [slotId],
+  );
+  return result.rows[0]?.is_booked ?? false;
 };
 
 export const withdrawSlot = async (client: PoolClient, slotId: string): Promise<Slot> => {
@@ -121,4 +137,12 @@ const toSlot = (row: SlotRow): Slot => ({
   endAt: row.end_at.toISOString(),
   status: row.status,
   isBooked: row.is_booked,
+});
+
+const toLockedSlot = (row: LockedSlotRow): LockedSlot => ({
+  id: row.id,
+  clinicianId: row.clinician_id,
+  startAt: row.start_at.toISOString(),
+  endAt: row.end_at.toISOString(),
+  status: row.status,
 });

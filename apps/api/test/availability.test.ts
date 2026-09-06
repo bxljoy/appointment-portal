@@ -116,3 +116,48 @@ test('does not withdraw a slot once its start time has passed', async () => {
     });
   });
 });
+
+test('does not withdraw a slot when a booking commits while withdrawal waits for its lock', async () => {
+  await withTestDb(async (pool) => {
+    const { patient, clinician, slot } = await seedScenario(pool);
+    const service = makeAvailabilityService({ pool, clock });
+    const bookingClient = await pool.connect();
+    let committed = false;
+
+    try {
+      await bookingClient.query('BEGIN');
+      await bookingClient.query('SELECT id FROM availability_slots WHERE id = $1 FOR UPDATE', [slot.id]);
+      await bookingClient.query(
+        'INSERT INTO appointments(slot_id, patient_id, status) VALUES ($1, $2, $3)',
+        [slot.id, patient.id, 'booked'],
+      );
+
+      const withdrawal = service.withdraw(clinician, slot.id);
+      await expect.poll(
+        async () => {
+          const result = await pool.query<{ count: number }>(
+            `SELECT count(*)::int AS count
+             FROM pg_stat_activity
+             WHERE datname = current_database()
+               AND wait_event_type = 'Lock'
+               AND query LIKE '%availability_slots%'`,
+          );
+          return result.rows[0]?.count ?? 0;
+        },
+        { timeout: 2_000, interval: 20 },
+      ).toBeGreaterThan(0);
+
+      await bookingClient.query('COMMIT');
+      committed = true;
+      await expect(withdrawal).rejects.toMatchObject({ status: 409, code: 'SLOT_UNAVAILABLE' });
+      await expect(pool.query('SELECT status FROM availability_slots WHERE id = $1', [slot.id])).resolves.toMatchObject({
+        rows: [{ status: 'open' }],
+      });
+    } finally {
+      if (!committed) {
+        await bookingClient.query('ROLLBACK');
+      }
+      bookingClient.release();
+    }
+  });
+});
