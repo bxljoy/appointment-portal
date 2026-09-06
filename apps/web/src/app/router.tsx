@@ -7,6 +7,9 @@ import { RequireSession } from '../features/auth/require-session';
 import { SignInPage } from '../features/auth/sign-in-page';
 import { useSession } from '../features/auth/auth-provider';
 import { Button } from '../components/ui/button';
+import { ClinicianDirectoryPage } from '../features/clinicians/directory-page';
+import { ClinicianDetailPage } from '../features/clinicians/detail-page';
+import { PatientAppointmentsPage } from '../features/appointments/patient-page';
 
 function RouteFocus() {
   const location = useLocation();
@@ -40,9 +43,9 @@ export function AppRoutes() {
     <Route element={<RequireSession><Outlet /></RequireSession>}>
       <Route element={<Layout />}>
         <Route index element={<Navigate to="/clinicians" replace />} />
-        <Route path="/clinicians" element={<RouteIntroduction title="Find a clinician" description="Explore clinicians and choose a time that works for you." />} />
-        <Route path="/clinicians/:id" element={<RouteIntroduction title="Plan an appointment" description="Review your clinician’s profile and upcoming availability." />} />
-        <Route path="/appointments" element={<RoleRoute role="patient"><RouteIntroduction title="Your appointments" description="Keep track of upcoming visits and your appointment history." /></RoleRoute>} />
+        <Route path="/clinicians" element={<ClinicianDirectoryPage />} />
+        <Route path="/clinicians/:id" element={<ClinicianDetailPage />} />
+        <Route path="/appointments" element={<RoleRoute role="patient"><PatientAppointmentsPage /></RoleRoute>} />
         <Route path="/clinician/availability" element={<RoleRoute role="clinician"><RouteIntroduction title="Your availability" description="Publish appointment times and manage your open slots." /></RoleRoute>} />
         <Route path="/clinician/appointments" element={<RoleRoute role="clinician"><RouteIntroduction title="Your appointments" description="Review scheduled visits and manage your upcoming appointments." /></RoleRoute>} />
         <Route path="*" element={<section><h1>Page not found</h1><p>This page is unavailable. Return to the clinician directory to continue.</p><Button asChild><Link to="/clinicians">Find a clinician</Link></Button></section>} />
