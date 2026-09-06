@@ -3,6 +3,51 @@ import * as contracts from '../src/index.js';
 
 const validId = '11111111-1111-4111-8111-111111111111';
 
+const intervalSchemas = [
+  {
+    name: 'slot',
+    schema: contracts.SlotSchema,
+    value: {
+      id: validId,
+      clinicianId: '22222222-2222-4222-8222-222222222222',
+      startAt: '2030-06-02T09:00:00Z',
+      endAt: '2030-06-02T09:30:00Z',
+      status: 'open',
+      isBooked: false,
+    },
+  },
+  {
+    name: 'appointment',
+    schema: contracts.AppointmentSchema,
+    value: {
+      id: validId,
+      slotId: '22222222-2222-4222-8222-222222222222',
+      clinicianId: '33333333-3333-4333-8333-333333333333',
+      patientId: '44444444-4444-4444-8444-444444444444',
+      patientDisplayName: 'Ada Patient',
+      clinicianDisplayName: 'Dr. Lovelace',
+      startAt: '2030-06-02T09:00:00Z',
+      endAt: '2030-06-02T09:30:00Z',
+      status: 'booked',
+      cancelledAt: null,
+      cancelledBy: null,
+    },
+  },
+];
+
+it.each(intervalSchemas)('accepts a 30-minute $name interval', ({ schema, value }) => {
+  expect(schema.safeParse(value).success).toBe(true);
+});
+
+it.each(['2030-06-02T09:15:00Z', '2030-06-02T09:45:00Z', '2030-06-02T08:30:00Z'])(
+  'rejects an interval ending at %s',
+  (endAt) => {
+    for (const { schema, value } of intervalSchemas) {
+      expect(schema.safeParse({ ...value, endAt }).success).toBe(false);
+    }
+  },
+);
+
 it('rejects caller-supplied patient identity when booking', () => {
   expect(
     contracts.BookInputSchema.safeParse({

@@ -9,6 +9,21 @@ export const DirectoryNameSchema = z
 
 export const RoleSchema = z.enum(['patient', 'clinician']);
 
+const APPOINTMENT_DURATION_MS = 30 * 60 * 1_000;
+
+const requireThirtyMinuteInterval = (
+  { startAt, endAt }: { startAt: string; endAt: string },
+  context: z.RefinementCtx,
+) => {
+  if (Date.parse(endAt) - Date.parse(startAt) !== APPOINTMENT_DURATION_MS) {
+    context.addIssue({
+      code: 'custom',
+      message: 'endAt must be 30 minutes after startAt',
+      path: ['endAt'],
+    });
+  }
+};
+
 export const MeSchema = z.strictObject({
   id: z.uuid(),
   displayName: DirectoryNameSchema,
@@ -23,28 +38,32 @@ export const ClinicianSchema = z.strictObject({
   timezone: z.string().trim().min(1).max(100),
 });
 
-export const SlotSchema = z.strictObject({
-  id: z.uuid(),
-  clinicianId: z.uuid(),
-  startAt: OffsetDateTimeSchema,
-  endAt: OffsetDateTimeSchema,
-  status: z.enum(['open', 'withdrawn']),
-  isBooked: z.boolean(),
-});
+export const SlotSchema = z
+  .strictObject({
+    id: z.uuid(),
+    clinicianId: z.uuid(),
+    startAt: OffsetDateTimeSchema,
+    endAt: OffsetDateTimeSchema,
+    status: z.enum(['open', 'withdrawn']),
+    isBooked: z.boolean(),
+  })
+  .superRefine(requireThirtyMinuteInterval);
 
-export const AppointmentSchema = z.strictObject({
-  id: z.uuid(),
-  slotId: z.uuid(),
-  clinicianId: z.uuid(),
-  patientId: z.uuid(),
-  patientDisplayName: DirectoryNameSchema,
-  clinicianDisplayName: DirectoryNameSchema,
-  startAt: OffsetDateTimeSchema,
-  endAt: OffsetDateTimeSchema,
-  status: z.enum(['booked', 'cancelled']),
-  cancelledAt: OffsetDateTimeSchema.nullable(),
-  cancelledBy: z.uuid().nullable(),
-});
+export const AppointmentSchema = z
+  .strictObject({
+    id: z.uuid(),
+    slotId: z.uuid(),
+    clinicianId: z.uuid(),
+    patientId: z.uuid(),
+    patientDisplayName: DirectoryNameSchema,
+    clinicianDisplayName: DirectoryNameSchema,
+    startAt: OffsetDateTimeSchema,
+    endAt: OffsetDateTimeSchema,
+    status: z.enum(['booked', 'cancelled']),
+    cancelledAt: OffsetDateTimeSchema.nullable(),
+    cancelledBy: z.uuid().nullable(),
+  })
+  .superRefine(requireThirtyMinuteInterval);
 
 export const PageSchema = <T extends z.ZodType>(itemSchema: T) =>
   z.strictObject({
