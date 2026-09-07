@@ -8,7 +8,7 @@ import { readPrivateFile } from './private-file.js';
 
 export async function runAuthenticatedWorker(url: string, environment = process.env): Promise<unknown> {
   assertLighthousePrivacy(environment);
-  const manifest = await loadDeploymentManifest(); if (!manifest) throw new Error('A ready deployment manifest is required.');
+  const manifest = await loadDeploymentManifest(environment.APPT_MEASURE_MANIFEST_FILE); if (!manifest) throw new Error('A ready deployment manifest is required.');
   const supplied = { account: environment.APPT_MEASURE_ACCOUNT ?? '', region: environment.APPT_MEASURE_REGION ?? '',
     issuer: environment.APPT_MEASURE_ISSUER ?? '', clientId: environment.APPT_MEASURE_CLIENT_ID ?? '', userPoolId: environment.APPT_MEASURE_USER_POOL_ID ?? '',
     cognitoDomain: environment.APPT_MEASURE_COGNITO_DOMAIN ?? '', frontendUrl: environment.APPT_MEASURE_FRONTEND_URL ?? '' };

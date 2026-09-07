@@ -38,7 +38,8 @@ beforeEach(async () => {
   const checkedAt = new Date();
   await writeFile(manualRegistrationPath, JSON.stringify({ account: manifest.account, region: manifest.region, commit: manifest.sourceCommit,
     frontendUrl: manifest.outputs.FrontendUrl, distributionId: manifest.outputs.DistributionId, checkedAt: checkedAt.toISOString(),
-    expiresAt: new Date(checkedAt.getTime() + 6 * 60 * 60_000).toISOString(), signupAlias: 'signup-check', status: 'manual-passed' }), { mode: 0o600 });
+    issuer: manifest.outputs.Issuer, clientId: manifest.outputs.ClientId, userPoolId: manifest.outputs.UserPoolId, cognitoDomain: manifest.outputs.CognitoDomain,
+    expiresAt: new Date(checkedAt.getTime() + 6 * 60 * 60_000).toISOString(), status: 'manual-passed' }), { mode: 0o600 });
   processMock.mockClear();
 });
 

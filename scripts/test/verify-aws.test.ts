@@ -7,7 +7,7 @@ import type { ProcessRunner } from '../preflight.js';
 
 const ready = { ...manifest, phase: 'ready' as const, sourceCommit: 'b'.repeat(40) };
 const now = () => new Date('2026-09-07T10:00:00Z');
-const manualAnswers = ['signup-check', ...Array(6).fill('yes')];
+const manualAnswers = Array(6).fill('yes');
 const manualRegistration = await confirmManualRegistration(ready, { ask: async () => manualAnswers.shift()! }, now);
 const correlation = { observe: async () => ({ requestCount: 2, coldCount: 1, warmCount: 1, maxDurationMs: 23 }) };
 
@@ -25,10 +25,11 @@ it('records only fixed scenario text and allowlisted request IDs', async () => {
       { name: 'deployed API and edge controls', status: 'passed', detail: 'AWS API suite passed; request IDs: request_A-12345678.' },
       { name: 'deployed booking races', status: 'passed', detail: 'AWS race suite passed; request IDs: request_R-12345678.' },
       { name: 'request-correlated CloudWatch observations', status: 'passed', detail: 'CloudWatch confirmed 2 request records: 1 cold and 1 warm; maximum observed application duration 23 ms. This is diagnostic evidence, not an SLA.' },
-      { name: 'controlled-inbox registration and recovery', status: 'manual-passed', detail: 'A human confirmed registration, email verification, initial patient role, sign-in, sign-out, and password recovery for signup alias signup-check.' },
+      { name: 'controlled-inbox registration and recovery', status: 'manual-passed', detail: 'A human confirmed registration, email verification, initial patient role, sign-in, sign-out, and password recovery for the controlled test account.' },
     ],
   });
   expect(JSON.stringify(summary)).not.toMatch(/example\.com|Bearer|secret-value/);
+  expect(JSON.stringify(summary)).not.toMatch(/private-alias|Private Person|signup-check/i);
 });
 
 it('does not call deployed API or race verification passed without a request ID', async () => {
@@ -61,6 +62,15 @@ it('cannot report overall verification success without correlation and explicit 
   expect(incomplete.checks.slice(-2).map((check) => check.status)).toEqual(['failed', 'failed']);
   const complete = await verifyAws(ready, { adapter, correlation, manualRegistration, now });
   expect(complete.checks.every((check) => check.status === 'passed' || check.status === 'manual-passed')).toBe(true);
+});
+
+it('never copies private alias or display-name fields into VerificationSummary details', async () => {
+  const adapter: VerificationAdapter = { run: async (suite) => ({ requestIds: suite === 'aws-auth' ? [] :
+    [suite === 'aws-api' ? 'request_A-12345678' : 'request_R-12345678'] }) };
+  const contaminated = { ...manualRegistration, signupAlias: 'private-alias', displayName: 'Private Person' } as typeof manualRegistration;
+  const summary = await verifyAws(ready, { adapter, correlation, manualRegistration: contaminated, now });
+  expect(summary.checks.at(-1)).toMatchObject({ status: 'failed' });
+  expect(JSON.stringify(summary)).not.toMatch(/private-alias|Private Person/i);
 });
 
 it('requires a ready manifest with an exact source commit before execution', async () => {

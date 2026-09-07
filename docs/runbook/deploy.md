@@ -30,8 +30,10 @@ pnpm demo:confirm-registration
 ```
 
 The command requires an interactive TTY, refuses flags and CI/piped input, and asks
-for a non-email alias plus an explicit `yes` for every checklist item. The confirmation
-is bound to the account, region, ready commit, FrontendUrl, DistributionId, and a six-hour
+for an explicit `yes` for every checklist item. It persists no email, alias, display
+name, or local-part. The confirmation
+is bound to the account, region, ready commit, FrontendUrl, DistributionId, exact
+Cognito issuer/client/pool/domain authority, and a six-hour
 expiry. Without it, standalone verification writes an incomplete manual check and
 exits unsuccessfully. Provisioned accounts cannot create this record.
 
@@ -52,7 +54,8 @@ Run three repeats and investigate a public navigation median below 90. Authentic
 timespan evidence records only the metrics that timespan mode supplies and has no
 navigation score. Describe both as Lighthouse lab data. The private performance record includes the ready source commit, UTC time,
 Lighthouse version, target, mode, mobile profile, and run count; stale or mismatched
-records are rejected.
+records are rejected. Each recorded final URL must equal the requested URL exactly;
+same-origin sign-in, callback, error, query, and fragment diversions are rejected.
 
 The access-token-expiry case intentionally waits until the deployed five-minute token
 expires. Keep this separate from the controlled throttling check, and do not increase
