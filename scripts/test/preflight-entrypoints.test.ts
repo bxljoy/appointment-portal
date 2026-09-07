@@ -17,6 +17,8 @@ const fullInput = {
   repository: 'OWNER/REPOSITORY',
   branch: 'main',
   sourceCommit: 'a'.repeat(40),
+  createdAt: '2030-06-01T00:00:00.000Z',
+  expiresAt: '2030-06-01T01:00:00.000Z',
   accountsFile: '/private/credentials/accounts.json',
   priceReport: '/private/prices.json',
 };

@@ -10,6 +10,9 @@ export type DemoConfig = {
   deliveryStack?: 'AppointmentPortalDelivery';
   durationHours: number; maxCostUsd: number;
   sourceCommit?: string;
+  expiresAt?: string;
+  repository?: string;
+  branch?: string;
 };
 export type StackInspection = { exists: boolean; owned: boolean; phase?: 'bootstrap' | 'ready'; outputs?: Record<string, string>; sourceCommit?: string; status?: string };
 export type DemoDependencies = {
@@ -25,6 +28,7 @@ export type DemoDependencies = {
   provision(): Promise<void>;
   waitForProxy(): Promise<void>;
   verifyMigration(): Promise<void>;
+  probeApplication(manifest: DeploymentManifest): Promise<void>;
   publish(manifest: DeploymentManifest): Promise<void>;
   verify(manifest: DeploymentManifest): Promise<void>;
 };
@@ -40,6 +44,9 @@ export const runDemo = async (deps: DemoDependencies): Promise<DeploymentManifes
   if (application.exists && deps.config.sourceCommit && application.sourceCommit !== deps.config.sourceCommit) {
     throw new Error('Live application stack source commit does not match this checkout.');
   }
+  if (application.exists && deps.config.expiresAt && application.outputs?.ExpiresAt !== deps.config.expiresAt) {
+    throw new Error('Live application stack expiry does not match the configured maximum lifetime.');
+  }
   if (saved?.phase === 'ready' && !application.exists) throw new Error('Saved ready deployment is missing from the live account.');
   if (saved?.phase === 'bootstrap' && !application.exists) saved = undefined;
   if (application.exists && saved?.phase === 'ready' && application.phase !== 'ready') throw new Error('Live stack phase conflicts with the saved ready manifest.');
@@ -51,6 +58,8 @@ export const runDemo = async (deps: DemoDependencies): Promise<DeploymentManifes
       ...(deps.config.deliveryStack ? { deliveryStack: deps.config.deliveryStack } : {}),
       phase: application.phase, outputs: application.outputs, resources: [],
       ...(deps.config.sourceCommit ? { sourceCommit: deps.config.sourceCommit } : {}),
+      ...(deps.config.expiresAt ? { expiresAt: deps.config.expiresAt } : {}),
+      ...(deps.config.repository ? { repository: deps.config.repository } : {}), ...(deps.config.branch ? { branch: deps.config.branch } : {}),
     };
     await deps.saveManifest(recovered);
     saved = recovered;
@@ -80,6 +89,7 @@ export const runDemo = async (deps: DemoDependencies): Promise<DeploymentManifes
   await deps.waitForProxy();
   await deps.verifyMigration();
   await deps.saveManifest(ready);
+  await deps.probeApplication(ready);
   await deps.publish(ready);
   await deps.verify(ready);
   return ready;
@@ -89,7 +99,9 @@ const assertSavedTarget = (manifest: DeploymentManifest | undefined, config: Dem
   if (!manifest) return;
   if (manifest.account !== config.account || manifest.region !== config.region || manifest.qualifier !== config.qualifier ||
     manifest.appStack !== config.appStack || manifest.toolkitStack !== config.toolkitStack || manifest.projectTag !== config.projectTag ||
-    config.sourceCommit !== undefined && manifest.sourceCommit !== config.sourceCommit) {
+    config.sourceCommit !== undefined && manifest.sourceCommit !== config.sourceCommit ||
+    config.expiresAt !== undefined && manifest.expiresAt !== config.expiresAt ||
+    config.repository !== undefined && manifest.repository !== config.repository || config.branch !== undefined && manifest.branch !== config.branch) {
     throw new Error('Saved deployment manifest does not match the requested target.');
   }
 };
@@ -106,7 +118,7 @@ export type CostRates = {
 };
 export type CostInput = { durationHours: number; capUsd: number; rates: CostRates };
 export const estimateCost = (input: CostInput) => {
-  const duration = z.number().positive().max(24).parse(input.durationHours);
+  const duration = z.number().positive().max(6).parse(input.durationHours);
   const cap = z.number().nonnegative().parse(input.capUsd);
   const rates = z.object({
     databaseHourly: z.number().nonnegative(), proxyVcpuHourly: z.number().nonnegative(), databaseVcpus: z.number().int().positive().max(128),

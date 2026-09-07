@@ -50,6 +50,7 @@ jobs:
           pnpm check:infra
           pnpm check:bundles
           pnpm check:artifacts
+          pnpm audit --audit-level high
       - name: Install the deployed-browser test runtime
         run: pnpm exec playwright install --with-deps chromium
       - name: Prepare private runtime inputs

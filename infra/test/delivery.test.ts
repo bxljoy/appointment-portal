@@ -57,9 +57,12 @@ describe('GitHub OIDC delivery identity', () => {
     const readResources = JSON.stringify(resources(reads));
     for (const name of ['AppointmentPortal', 'AppointmentPortalToolkit', 'AppointmentPortalDelivery']) expect(readResources).toContain(`stack/${name}/*`);
     const deletes = statements.filter((statement) => actions(statement).includes('cloudformation:DeleteStack'));
-    expect(deletes).toHaveLength(1);
-    expect(JSON.stringify(resources(deletes[0]!))).toContain('stack/AppointmentPortal/*');
-    expect(JSON.stringify(resources(deletes[0]!))).not.toContain('Toolkit');
+    expect(deletes).toHaveLength(2);
+    for (const deletion of deletes) {
+      expect(JSON.stringify(resources(deletion))).toContain('stack/AppointmentPortal/*');
+      expect(JSON.stringify(resources(deletion))).not.toContain('Toolkit');
+      expect(JSON.stringify(resources(deletion))).not.toContain('Delivery');
+    }
   });
 
   it('grants every application residual delete used by the workflow without provider deletion', () => {
@@ -107,5 +110,24 @@ describe('GitHub OIDC delivery identity', () => {
     expect(json).toContain('logs:FilterLogEvents');
     expect(json).toContain(':log-group:/appointment-portal/AppointmentPortal/api/*');
     expect(json).not.toContain('cloudwatch:GetMetricData');
+  });
+
+  it('invokes only the fixed profiles application probe function', () => {
+    const json = JSON.stringify(synth().toJSON());
+    expect(json).toContain('lambda:InvokeFunction');
+    expect(json).toContain(':function:AppointmentPortal-profiles');
+    expect(json).not.toContain(':function:AppointmentPortal-*');
+  });
+
+  it('exports a Scheduler role limited to deleting only the application stack', () => {
+    const template = synth();
+    template.hasOutput('ExpirySafeguardRoleArn', { Value: Match.anyValue() });
+    const json = JSON.stringify(template.toJSON());
+    expect(json).toContain('scheduler.amazonaws.com');
+    expect(json).toContain('aws:SourceAccount');
+    expect(json).toContain(':schedule/default/appointment-portal-expiry');
+    expect(json).toContain('appointment-portal-expiry-apptdemo');
+    expect(json).toContain('cloudformation:DeleteStack');
+    expect(json).toContain(':stack/AppointmentPortal/*');
   });
 });

@@ -15,6 +15,7 @@ export type DeliveryStackProps = StackProps & z.infer<typeof propsSchema>;
 
 export class DeliveryStack extends Stack {
   readonly role: iam.Role;
+  readonly expiryRole: iam.Role;
 
   constructor(scope: Construct, id: string, props: DeliveryStackProps) {
     const account = z.string().regex(/^\d{12}$/).parse(props.env?.account);
@@ -42,6 +43,16 @@ export class DeliveryStack extends Stack {
       assumedBy: principal,
       maxSessionDuration: undefined,
     });
+    this.expiryRole = new iam.Role(this, 'ExpirySafeguardRole', {
+      roleName: `appointment-portal-expiry-${config.qualifier}`,
+      description: 'One-time Scheduler deletion authority for the appointment portal application stack',
+      assumedBy: new iam.ServicePrincipal('scheduler.amazonaws.com', { conditions: {
+        StringEquals: { 'aws:SourceAccount': account },
+        ArnLike: { 'aws:SourceArn': `arn:${this.partition}:scheduler:${region}:${account}:schedule/default/appointment-portal-expiry` },
+      } }),
+    });
+    this.expiryRole.addToPolicy(new iam.PolicyStatement({ actions: ['cloudformation:DeleteStack'],
+      resources: [`arn:${this.partition}:cloudformation:${region}:${account}:stack/AppointmentPortal/*`] }));
     const bootstrapRole = (kind: string) => `arn:${this.partition}:iam::${account}:role/cdk-${config.qualifier}-${kind}-role-${account}-${region}`;
     this.role.addToPolicy(new iam.PolicyStatement({
       actions: ['sts:AssumeRole'],
@@ -56,7 +67,7 @@ export class DeliveryStack extends Stack {
       actions: ['cloudformation:DeleteStack'], resources: [`arn:${this.partition}:cloudformation:${region}:${account}:stack/AppointmentPortal/*`],
     }));
     this.role.addToPolicy(new iam.PolicyStatement({
-      actions: ['lambda:InvokeFunction'], resources: [`arn:${this.partition}:lambda:${region}:${account}:function:AppointmentPortal-*`],
+      actions: ['lambda:InvokeFunction'], resources: [`arn:${this.partition}:lambda:${region}:${account}:function:AppointmentPortal-profiles`],
     }));
     this.role.addToPolicy(new iam.PolicyStatement({
       actions: ['cognito-idp:AdminCreateUser', 'cognito-idp:AdminGetUser', 'cognito-idp:AdminSetUserPassword', 'cognito-idp:DescribeUserPoolClient'],
@@ -126,6 +137,7 @@ export class DeliveryStack extends Stack {
       conditions: { StringEquals: { 'iam:PassedToService': 'cloudformation.amazonaws.com' } },
     }));
     new CfnOutput(this, 'DeliveryRoleArn', { value: this.role.roleArn });
+    new CfnOutput(this, 'ExpirySafeguardRoleArn', { value: this.expiryRole.roleArn });
     new CfnOutput(this, 'AllowedBranch', { value: config.branch });
   }
 }

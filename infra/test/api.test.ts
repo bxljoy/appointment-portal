@@ -16,7 +16,7 @@ const synth = (phase: 'bootstrap' | 'ready') => {
   } });
   Validations.of(app).acknowledge({ id: 'CloudFormation-Validate::W3010', reason: 'Offline tests use fictional cached AZs.' });
   const stack = new PortalStack(app, 'TestPortal', {
-    env, config: { ...env, postgresVersion: '17.6', phase, qualifier: 'portal123',
+    env, config: { ...env, postgresVersion: '17.6', phase, qualifier: 'portal123', expiresAt: '2030-06-01T18:00:00.000Z',
       ...(phase === 'ready' ? { frontendUrl: 'https://demo.cloudfront.net' } : {}) },
   });
   const template = Template.fromStack(stack);
@@ -119,7 +119,7 @@ describe.each(['bootstrap', 'ready'] as const)('%s API trust boundary', (phase) 
     template.resourceCountIs('AWS::ApiGatewayV2::Stage', 1);
     const stage = Object.values(template.findResources('AWS::ApiGatewayV2::Stage'))[0]!.Properties;
     expect(stage).toMatchObject({ StageName: '$default', AutoDeploy: true,
-      DefaultRouteSettings: { ThrottlingRateLimit: 10, ThrottlingBurstLimit: 20 } });
+      DefaultRouteSettings: { ThrottlingRateLimit: 5, ThrottlingBurstLimit: 5 } });
     expect(JSON.parse(stage.AccessLogSettings.Format)).toEqual({ requestId: '$context.requestId',
       routeKey: '$context.routeKey', status: '$context.status', responseLength: '$context.responseLength',
       integrationLatency: '$context.integrationLatency', responseLatency: '$context.responseLatency' });
@@ -150,4 +150,20 @@ describe.each(['bootstrap', 'ready'] as const)('%s API trust boundary', (phase) 
       expect(typeof (await import(pathToFileURL(bundle).href)).handler).toBe('function');
     }
   });
+});
+
+it('installs an AWS-side one-time application stack deletion safeguard', () => {
+  const { template } = synth('bootstrap');
+  template.hasResourceProperties('AWS::Scheduler::Schedule', {
+    ActionAfterCompletion: 'DELETE', ScheduleExpression: 'at(2030-06-01T18:00:00)', ScheduleExpressionTimezone: 'UTC',
+    FlexibleTimeWindow: { Mode: 'OFF' },
+  });
+  const json = JSON.stringify(template.toJSON());
+  expect(json).toContain('arn:aws:scheduler:::aws-sdk:cloudformation:deleteStack');
+  expect(json).toContain('AppointmentPortal');
+  expect(json).toContain('appointment-portal-expiry-portal123');
+  const scheduleId = Object.keys(template.findResources('AWS::Scheduler::Schedule'))[0]!;
+  for (const type of ['AWS::RDS::DBInstance', 'AWS::RDS::DBProxy', 'AWS::CloudFront::Distribution']) {
+    for (const resource of Object.values(template.findResources(type))) expect(resource.DependsOn ?? []).toContain(scheduleId);
+  }
 });

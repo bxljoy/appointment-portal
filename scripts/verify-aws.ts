@@ -9,6 +9,7 @@ export { parseRequestIdMarkers } from './aws-request-id.js';
 export type VerificationSummary = {
   commit: string;
   checkedAt: string;
+  expiresAt?: string;
   checks: Array<{ name: string; status: 'passed' | 'failed' | 'manual-passed'; detail: string }>;
 };
 export type VerificationSuite = 'aws-auth' | 'aws-api' | 'aws-races';
@@ -73,5 +74,5 @@ export async function verifyAws(manifest: DeploymentManifest, options: {
   }
   const checkedAt = clock();
   checks.push(manualRegistrationCheck(manifest, options.manualRegistration, checkedAt));
-  return { commit: manifest.sourceCommit, checkedAt: checkedAt.toISOString(), checks };
+  return { commit: manifest.sourceCommit, checkedAt: checkedAt.toISOString(), ...(manifest.expiresAt ? { expiresAt: manifest.expiresAt } : {}), checks };
 }

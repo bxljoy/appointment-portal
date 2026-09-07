@@ -25,7 +25,7 @@ export const toPreflightInput = (input: PreflightInput): PreflightInput => ({
 
 const inputSchema = z.strictObject({
   account: z.string().regex(/^\d{12}$/), region: z.string().regex(/^[a-z]{2}(?:-[a-z]+)+-[1-9]\d*$/),
-  postgresVersion: z.string().regex(/^17\.[1-9]\d*$/), durationHours: z.number().positive().max(24), maxCostUsd: z.number().positive(),
+  postgresVersion: z.string().regex(/^17\.[1-9]\d*$/), durationHours: z.number().positive().max(6), maxCostUsd: z.number().positive(),
 });
 
 export const runPreflight = async (raw: PreflightInput, probe: PreflightProbe) => {

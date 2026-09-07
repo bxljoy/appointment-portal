@@ -8,7 +8,9 @@ export const cleanup = async (manifest: DeploymentManifest, inventory: Inventory
   const account = await inventory.account();
   if (account !== manifest.account) throw new Error(`AWS account mismatch: expected ${manifest.account}.`);
   const live = await collectInventory(inventory);
-  const resources = deduplicateResources([...manifest.resources, ...live]);
+  // A restored manifest is context, never deletion authority. Only current live
+  // inventory backed by a project tag or fresh owned-stack membership may delete.
+  const resources = deduplicateResources(live);
   const inScope = (resource: ResourceRecord) => options.includeInfrastructure || !/^(?:Bootstrap|Delivery)::/.test(resource.type);
   const targets = resources.filter((resource) => resource.owned && resource.state !== 'scheduled' && inScope(resource));
   const scheduled = resources.filter((resource) => resource.owned && resource.state === 'scheduled');

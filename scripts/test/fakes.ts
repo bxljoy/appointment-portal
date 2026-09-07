@@ -15,10 +15,14 @@ export const manifest: DeploymentManifest = {
   toolkitStack: 'AppointmentPortalToolkit',
   qualifier: 'apptdemo',
   sourceCommit: 'a'.repeat(40),
+  repository: 'OWNER/REPOSITORY', branch: 'main',
+  expiresAt: '2030-06-01T01:00:00.000Z',
   phase: 'ready',
   outputs: { FrontendUrl: 'https://demo.cloudfront.net', DistributionId: 'EDISTFIXTURE',
     Issuer: 'https://cognito-idp.eu-north-1.amazonaws.com/eu-north-1_fixture', UserPoolId: 'eu-north-1_fixture',
-    ClientId: 'fixtureclient', CognitoDomain: 'https://appointment-portal.auth.eu-north-1.amazoncognito.com' },
+    ClientId: 'fixtureclient', CognitoDomain: 'https://appointment-portal.auth.eu-north-1.amazoncognito.com',
+    ProfilesFunctionName: 'AppointmentPortal-profiles', ExpiresAt: '2030-06-01T01:00:00.000Z',
+    SafeguardScheduleName: 'appointment-portal-expiry' },
   resources: [],
 };
 

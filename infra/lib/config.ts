@@ -13,6 +13,7 @@ const portalConfigSchema = z.strictObject({
   phase: z.enum(['bootstrap', 'ready']),
   frontendUrl: frontendOrigin.optional(),
   qualifier: z.string().regex(/^[a-z0-9]{1,10}$/),
+  expiresAt: z.iso.datetime({ offset: true }).refine((value) => value.endsWith('Z')).optional(),
 }).refine((config) => config.phase !== 'ready' || config.frontendUrl !== undefined, {
   path: ['frontendUrl'], message: 'ready phase requires frontendUrl',
 });

@@ -26,7 +26,8 @@
     "demo:measure": "tsx scripts/measure-web.ts",
     "demo:diagnostics": "tsx scripts/capture-diagnostics.ts",
     "demo:destroy": "tsx scripts/cleanup.ts",
-    "demo:verify-cleanup": "tsx scripts/verify-cleanup.ts"
+    "demo:verify-cleanup": "tsx scripts/verify-cleanup.ts",
+    "demo:restore-manifest": "tsx scripts/destroy-provenance.ts"
   },
   "devDependencies": {
     "@aws-sdk/client-cloudformation": "3.1127.0",

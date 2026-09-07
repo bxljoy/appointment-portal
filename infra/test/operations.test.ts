@@ -97,12 +97,13 @@ describe('bounded disposable operations', () => {
   it.each(['bootstrap', 'ready'] as const)('%s exposes exact public/operation outputs and destroys every resource', (phase) => {
     const { stack, template } = synth(phase);
     const outputs = template.toJSON().Outputs;
-    expect(Object.keys(outputs).sort()).toEqual(['FrontendUrl', 'ApiUrl', 'DistributionId', 'WebBucketName', 'UserPoolId', 'ClientId', 'Issuer', 'CognitoDomain', 'ProxyName', 'DatabaseId', 'MigrationFunctionName', 'VpcId', 'AdminSecretArn', 'ApplicationSecretArn'].sort());
+    expect(Object.keys(outputs).sort()).toEqual(['FrontendUrl', 'ApiUrl', 'DistributionId', 'WebBucketName', 'UserPoolId', 'ClientId', 'Issuer', 'CognitoDomain', 'ProxyName', 'DatabaseId', 'MigrationFunctionName', 'VpcId', 'AdminSecretArn', 'ApplicationSecretArn', 'ProfilesFunctionName'].sort());
     const output = (name: string, value: unknown) => expect(outputs[name].Value).toEqual(stack.resolve(value));
     output('UserPoolId', stack.identity.userPool.userPoolId); output('ClientId', stack.identity.appClient.userPoolClientId);
     output('Issuer', stack.identity.issuer); output('CognitoDomain', stack.identity.domain.baseUrl());
     output('ProxyName', stack.data.proxy.dbProxyName); output('DatabaseId', stack.data.database.instanceIdentifier);
     output('MigrationFunctionName', stack.data.migrationFunction.functionName);
+    output('ProfilesFunctionName', stack.api.functions.profiles.functionName);
     output('VpcId', stack.data.vpc.vpcId); output('AdminSecretArn', stack.data.adminSecret.secretArn);
     output('ApplicationSecretArn', stack.data.applicationSecret.secretArn);
     for (const resource of Object.values(template.toJSON().Resources) as { DeletionPolicy: string; UpdateReplacePolicy: string }[]) {

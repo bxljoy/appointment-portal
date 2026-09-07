@@ -11,6 +11,8 @@ const processMock = vi.hoisted(() => vi.fn(async (...input: [string, readonly st
 vi.mock('../preflight.js', () => ({ runProcess: processMock }));
 import { verifyDeployment } from '../verify-deployment.js';
 
+const expiry = { createdAt: '2030-06-01T00:00:00.000Z', expiresAt: '2030-06-01T01:00:00.000Z' };
+
 let root: string;
 let configPath: string;
 let accountsPath: string;
@@ -32,7 +34,8 @@ beforeEach(async () => {
   ];
   await writeFile(accountsPath, JSON.stringify(accounts), { mode: 0o600 });
   await writeFile(configPath, JSON.stringify({ account: manifest.account, region: manifest.region, postgresVersion: '17.6', durationHours: 1,
-    maxCostUsd: 5, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), accountsFile: accountsPath, priceReport: accountsPath }), { mode: 0o600 });
+    maxCostUsd: 5, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), ...expiry,
+    accountsFile: accountsPath, priceReport: accountsPath }), { mode: 0o600 });
   await writeFile(deploymentPath, JSON.stringify({ ...manifest, outputs: { ...manifest.outputs, UserPoolId: 'eu-north-1_fixture',
     ApiUrl: 'https://api.example.com', WebBucketName: 'fixture-bucket' } }), { mode: 0o600 });
   const checkedAt = new Date();

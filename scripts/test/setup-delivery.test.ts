@@ -6,13 +6,15 @@ import { setupDelivery } from '../setup-delivery.js';
 import { DELIVERY_STACK, TOOLKIT_STACK, type DeploymentManifest } from '../lifecycle-types.js';
 import { manifest } from './fakes.js';
 
+const expiry = { createdAt: '2030-06-01T00:00:00.000Z', expiresAt: '2030-06-01T01:00:00.000Z' };
+
 it('persists an ownership-neutral recovery target before bootstrap can fail', async () => {
   const root = await mkdtemp(join(await realpath(tmpdir()), 'portal-setup-bootstrap-failure-'));
   const configPath = join(root, 'config.json');
   const saves: DeploymentManifest[] = [];
   try {
     await writeFile(configPath, JSON.stringify({ account: manifest.account, region: manifest.region, postgresVersion: '17.6', durationHours: 1,
-      maxCostUsd: 5, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), accountsFile: '/unused', priceReport: '/unused' }), { mode: 0o600 });
+      maxCostUsd: 5, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), ...expiry, accountsFile: '/unused', priceReport: '/unused' }), { mode: 0o600 });
     await expect(setupDelivery(configPath, {
       sts: { send: async () => ({ Account: manifest.account }) } as never,
       cloudformation: { send: async () => { throw Object.assign(new Error('stack absent'), { name: 'ValidationError' }); } } as never,
@@ -35,7 +37,7 @@ it('checkpoints toolkit and delivery ownership before output parsing or inventor
   const commands: (readonly string[])[] = [];
   try {
     await writeFile(configPath, JSON.stringify({ account: manifest.account, region: manifest.region, postgresVersion: '17.6', durationHours: 1,
-      maxCostUsd: 5, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), accountsFile: '/unused', priceReport: '/unused' }), { mode: 0o600 });
+      maxCostUsd: 5, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), ...expiry, accountsFile: '/unused', priceReport: '/unused' }), { mode: 0o600 });
     const cloudformation = { send: vi.fn(async (command: { constructor: { name: string }; input: { StackName?: string } }) => {
       if (command.constructor.name !== 'DescribeStacksCommand') throw new Error('unexpected command');
       const exists = command.input.StackName === TOOLKIT_STACK ? toolkitExists : deliveryExists;
@@ -77,7 +79,7 @@ it('persists recovery immediately after toolkit bootstrap even when ownership re
   let inspections = 0;
   try {
     await writeFile(configPath, JSON.stringify({ account: manifest.account, region: manifest.region, postgresVersion: '17.6', durationHours: 1,
-      maxCostUsd: 5, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), accountsFile: '/unused', priceReport: '/unused' }), { mode: 0o600 });
+      maxCostUsd: 5, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), ...expiry, accountsFile: '/unused', priceReport: '/unused' }), { mode: 0o600 });
     await expect(setupDelivery(configPath, {
       sts: { send: async () => ({ Account: manifest.account }) } as never,
       cloudformation: { send: async () => {

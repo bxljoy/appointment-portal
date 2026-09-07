@@ -20,6 +20,7 @@ it('records only fixed scenario text and allowlisted request IDs', async () => {
   const summary = await verifyAws(ready, { adapter, correlation, manualRegistration, now });
   expect(summary).toEqual({
     commit: 'b'.repeat(40), checkedAt: '2026-09-07T10:00:00.000Z',
+    expiresAt: '2030-06-01T01:00:00.000Z',
     checks: [
       { name: 'deployed managed authentication', status: 'passed', detail: 'AWS auth suite passed.' },
       { name: 'deployed API and edge controls', status: 'passed', detail: 'AWS API suite passed; request IDs: request_A-12345678.' },

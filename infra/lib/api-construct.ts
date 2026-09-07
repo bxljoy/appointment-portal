@@ -31,6 +31,7 @@ export class ApiConstruct extends Construct {
     });
     const makeFunction = (feature: Feature) => {
       const fn = new NodejsFunction(this, feature, {
+        ...(feature === 'profiles' ? { functionName: 'AppointmentPortal-profiles' } : {}),
         description: `Appointment portal ${feature} API`,
         entry: join(workspaceRoot, `apps/api/src/modules/${feature}/handler.ts`),
         projectRoot: workspaceRoot, depsLockFilePath: join(workspaceRoot, 'pnpm-lock.yaml'),
@@ -83,7 +84,7 @@ export class ApiConstruct extends Construct {
     }
     new HttpStage(this, 'DefaultStage', {
       httpApi: this.httpApi, stageName: '$default', autoDeploy: true,
-      throttle: { rateLimit: 10, burstLimit: 20 },
+      throttle: { rateLimit: 5, burstLimit: 5 },
       accessLogSettings: {
         destination: new LogGroupLogDestination(logGroup('Access')),
         format: AccessLogFormat.custom(JSON.stringify({ requestId: '$context.requestId', routeKey: '$context.routeKey',

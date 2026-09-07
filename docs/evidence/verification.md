@@ -12,8 +12,10 @@ changing the status to verified:
 - managed Cognito authorization-code login with PKCE, logout, and return navigation;
 - access-token use, ID-token rejection, malformed/missing token rejection, missing
   custom scope rejection, and real five-minute access-token expiry;
-- caller isolation, forged identifier rejection, one-winner booking concurrency,
-  cancellation reopening, and clinician cancel-withdraw;
+- caller isolation, forged identity/body rejection, patient/clinician wrong-role
+  rejection, cross-clinician concealed slot and appointment operations, unchanged
+  owner state after rejected operations, one-winner booking concurrency, cancellation
+  reopening, and clinician cancel-withdraw;
 - uncached CloudFront API responses, protected direct API Gateway, private S3,
   nested SPA refresh, and non-HTML missing-asset behavior;
 - request-correlated application completion records, including bounded warm/cold

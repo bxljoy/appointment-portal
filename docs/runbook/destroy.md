@@ -57,4 +57,18 @@ shared GitHub provider. Secrets deletion is asynchronous; see the official
 (checked 2026-09-06).
 
 For a cancelled GitHub runner, download the demo run's `deployment-manifest`
-artifact and run these commands locally. `always()` cannot cover runner loss.
+artifact and run these commands locally. `always()` cannot cover runner loss. The
+manual destroy workflow requires both the run ID and the approved deployed commit.
+Before requesting AWS credentials or downloading files, `demo:restore-manifest`
+queries GitHub's run and artifact metadata with `actions:read` and requires the exact
+repository, `.github/workflows/demo.yml`, configured main branch, completed successful
+run, approved head SHA, unexpired `deployment-manifest`, and its SHA-256 digest. After
+download it binds the parsed manifest's account, region, repository, branch, and commit
+to that provenance. Arbitrary downloaded JSON is never accepted as deletion authority.
+
+Restored `owned:true` records are hints only. Each direct delete requires current
+`Project=appointment-portal` tags or fresh membership in a currently owned exact
+CloudFormation stack. S3 versions are enumerated only from a live bucket whose current
+`Project` tag verifies ownership.
+The GitHub OIDC provider remains shared and non-deletable even under `--all`.
+Unverified prefix-matching leftovers are reported for manual investigation.

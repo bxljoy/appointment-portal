@@ -90,6 +90,8 @@ enter process arguments or environment variables.
   "repository": "OWNER/REPOSITORY",
   "branch": "main",
   "sourceCommit": "0123456789abcdef0123456789abcdef01234567",
+  "createdAt": "2030-06-01T12:00:00.000Z",
+  "expiresAt": "2030-06-01T18:00:00.000Z",
   "accountsFile": "/absolute/path/.runtime/accounts.json",
   "priceReport": "/absolute/path/.runtime/prices.json"
 }
@@ -173,6 +175,11 @@ credentials, runs preflight, deploys bootstrap mode, saves the manifest, migrate
 provisions fictional users, waits for proxy health, deploys ready mode with the
 literal CloudFront origin and `portal_app` proxy auth, verifies migration again,
 saves ready state, publishes, invalidates, and runs deployed tests.
+Before frontend publication, the runner directly invokes the fixed
+`AppointmentPortal-profiles` Lambda with a synthetic gateway event for the provisioned
+patient fixture. A 200 invocation, absent `FunctionError`, safe HTTP 200 payload, and
+patient profile prove that an application function can query through RDS Proxy using
+the `portal_app` secret. Migration success does not satisfy this gate.
 Each application deployment passes
 `AppointmentPortal:DeploymentPhase=bootstrap|ready` explicitly through CDK's
 `--parameters` option. The live parameter therefore records the deployed phase even
@@ -222,3 +229,13 @@ disabled. A lost runner cannot guarantee an `always()` cleanup step. Restore the
 manifest and follow [destroy.md](destroy.md) locally. CDK qualifier behavior was
 checked 2026-09-06 in [AWS CDK bootstrapping](https://docs.aws.amazon.com/cdk/v2/guide/bootstrapping.html)
 and the [bootstrap CLI reference](https://docs.aws.amazon.com/cdk/v2/guide/ref-cli-cmd-bootstrap.html).
+
+The application stack creates a one-time EventBridge Scheduler safeguard before its
+primary billable resources through explicit CloudFormation dependencies. The schedule
+uses an absolute UTC `ExpiresAt` computed from the configured
+duration, capped at six hours, and persisted in the private configuration, manifest,
+and stack outputs. The schedule targets CloudFormation `DeleteStack` for
+`AppointmentPortal` through a role limited to that stack, uses a zero-width flexible
+window, and deletes itself after invocation. Manual stack cleanup removes the schedule.
+This safeguard removes primary application resources after runner loss; it does not
+remove retained residuals, the delivery stack, CDK toolkit, or shared resources.

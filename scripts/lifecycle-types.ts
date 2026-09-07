@@ -20,6 +20,7 @@ const publicOutputNames = new Set([
   'FrontendUrl', 'ApiUrl', 'DistributionId', 'WebBucketName', 'UserPoolId', 'ClientId', 'Issuer',
   'CognitoDomain', 'ProxyName', 'DatabaseId', 'MigrationFunctionName', 'VpcId', 'AdminSecretArn',
   'ApplicationSecretArn',
+  'ProfilesFunctionName', 'ExpiresAt', 'SafeguardScheduleName',
 ]);
 const outputsSchema = z.record(z.string(), z.string().max(4096)).refine(
   (outputs) => Object.keys(outputs).every((name) => publicOutputNames.has(name) && !/(?:password|token|secretvalue|accesskey)/i.test(name)),
@@ -37,6 +38,9 @@ const manifestSchema = z.strictObject({
   toolkitStack: z.literal(TOOLKIT_STACK),
   qualifier: z.literal(QUALIFIER),
   sourceCommit: z.string().regex(/^[a-f0-9]{40}$/).optional(),
+  repository: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/).optional(),
+  branch: z.string().regex(/^[A-Za-z0-9._/-]+$/).optional(),
+  expiresAt: z.iso.datetime({ offset: true }).refine((value) => value.endsWith('Z')).optional(),
   phase: z.enum(['bootstrap', 'ready']),
   outputs: outputsSchema,
   resources: z.array(resourceSchema).max(10_000),

@@ -5,8 +5,10 @@ import { describe, expect, it, vi } from 'vitest';
 import { estimateCost, publishFrontend, runDemo, type DemoDependencies } from '../deploy.js';
 import { runPreflight } from '../preflight.js';
 import { DEPLOYMENT_PATH, loadDeploymentManifest, parseDeploymentManifest } from '../lifecycle-types.js';
-import { makeAwsDemoDependencies, makeAwsPreflightProbe } from '../aws-lifecycle.js';
+import { makeAwsDemoDependencies, makeAwsPreflightProbe, probeApplicationDatabase } from '../aws-lifecycle.js';
 import { fakeAwsClients, manifest } from './fakes.js';
+
+const expiry = { createdAt: '2030-06-01T00:00:00.000Z', expiresAt: '2030-06-01T01:00:00.000Z' };
 
 const deps = (saved?: typeof manifest): DemoDependencies & { events: string[] } => {
   const events: string[] = [];
@@ -30,11 +32,21 @@ const deps = (saved?: typeof manifest): DemoDependencies & { events: string[] } 
       ...manifest, phase, outputs: { ...manifest.outputs, FrontendUrl: 'https://demo.cloudfront.net' },
     }; },
     migrate: next('migrate'), provision: next('provision'), waitForProxy: next('wait-proxy'),
-    verifyMigration: next('verify-migration'), publish: next('publish'), verify: next('verify'),
+    verifyMigration: next('verify-migration'), probeApplication: next('probe-application'), publish: next('publish'), verify: next('verify'),
   };
 };
 
 describe('disposable deployment lifecycle', () => {
+  it('requires a successful benign profiles response from the application Lambda probe', async () => {
+    const lambda = { send: vi.fn(async (command: unknown) => { void command; return { StatusCode: 200, Payload: Buffer.from(JSON.stringify({ statusCode: 200,
+      body: JSON.stringify({ id: '11111111-1111-4111-8111-111111111111', role: 'patient' }) })) }; }) };
+    await expect(probeApplicationDatabase('AppointmentPortal-profiles', '22222222-2222-4222-8222-222222222222', lambda as never)).resolves.toBeUndefined();
+    const command = lambda.send.mock.calls[0]![0] as unknown as { input: { FunctionName: string; Payload: Uint8Array } };
+    expect(command.input.FunctionName).toBe('AppointmentPortal-profiles');
+    expect(JSON.parse(Buffer.from(command.input.Payload).toString()).requestContext.authorizer.jwt.claims).toEqual({ sub: '22222222-2222-4222-8222-222222222222' });
+    lambda.send.mockResolvedValueOnce({ StatusCode: 200, FunctionError: 'Unhandled', Payload: Buffer.from('{}') } as never);
+    await expect(probeApplicationDatabase('AppointmentPortal-profiles', '22222222-2222-4222-8222-222222222222', lambda as never)).rejects.toThrow(/probe failed/i);
+  });
   it('rejects credential-like fields in deployment outputs', () => {
     expect(() => parseDeploymentManifest({ ...manifest, outputs: { ...manifest.outputs, DatabasePassword: 'must-not-persist' } })).toThrow();
   });
@@ -88,7 +100,7 @@ describe('disposable deployment lifecycle', () => {
         DescribeDBProxiesCommand: [{ DBProxies: [] }], GetAccountSettingsCommand: [{ AccountLimit: { UnreservedConcurrentExecutions: 116 } }],
       });
       const runtime = makeAwsDemoDependencies({ account: manifest.account, region: manifest.region, postgresVersion: '17.6', durationHours: 1,
-        maxCostUsd: 1, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), accountsFile: '/unused', priceReport }, clients,
+        maxCostUsd: 1, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), ...expiry, accountsFile: '/unused', priceReport }, clients,
       async (executable, args) => {
         if (executable === process.execPath) return { stdout: 'v24.0.1\n', stderr: '' };
         if (executable === 'pnpm' && args[0] === '--version') return { stdout: '11.22.0\n', stderr: '' };
@@ -105,7 +117,7 @@ describe('disposable deployment lifecycle', () => {
     expect(fake.events).toEqual([
       'preflight', 'inspect-application', 'inspect-bootstrap', 'bootstrap', 'deploy:bootstrap', 'save:bootstrap',
       'migrate', 'provision', 'wait-proxy', 'deploy:ready', 'wait-proxy',
-      'verify-migration', 'save:ready', 'publish', 'verify',
+      'verify-migration', 'save:ready', 'probe-application', 'publish', 'verify',
     ]);
   });
 
@@ -114,7 +126,7 @@ describe('disposable deployment lifecycle', () => {
     await runDemo(fake);
     expect(fake.events).toEqual([
       'preflight', 'inspect-application', 'migrate', 'provision', 'wait-proxy', 'deploy:ready', 'wait-proxy',
-      'verify-migration', 'save:ready', 'publish', 'verify',
+      'verify-migration', 'save:ready', 'probe-application', 'publish', 'verify',
     ]);
     expect(fake.events).not.toContain('deploy:bootstrap');
   });
@@ -162,7 +174,8 @@ describe('disposable deployment lifecycle', () => {
         if (stackInspection === 1) throw Object.assign(new Error('absent'), { name: 'ValidationError' });
         if (stackInspection === 2) return { Stacks: [{ Tags: [{ Key: 'Project', Value: manifest.projectTag }] }] };
         return { Stacks: [{ Tags: [{ Key: 'Project', Value: manifest.projectTag }, { Key: 'SourceCommit', Value: 'a'.repeat(40) }],
-          Parameters: [{ ParameterKey: 'DeploymentPhase', ParameterValue: 'bootstrap' }] }] };
+          Parameters: [{ ParameterKey: 'DeploymentPhase', ParameterValue: 'bootstrap' }],
+          Outputs: [{ OutputKey: 'ExpiresAt', OutputValue: expiry.expiresAt }] }] };
       }
       return baseSend(command as never);
     }) as never;
@@ -175,12 +188,12 @@ describe('disposable deployment lifecycle', () => {
       return { stdout: '', stderr: '' };
     };
     const runtime = makeAwsDemoDependencies({ account: manifest.account, region: manifest.region, postgresVersion: '17.6', durationHours: 1,
-      maxCostUsd: 1, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), accountsFile: '/unused', priceReport: '/unused' }, clients, runner, {
+      maxCostUsd: 1, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), ...expiry, accountsFile: '/unused', priceReport: '/unused' }, clients, runner, {
       load: async () => saved, save: async (value) => { saved = structuredClone(value) as typeof saved; },
     });
     runtime.preflight = async () => {};
     await expect(runDemo(runtime)).rejects.toThrow('partial replacement failed');
-    expect(saved.outputs).toEqual({});
+    expect(saved.outputs).toEqual({ ExpiresAt: expiry.expiresAt });
     await expect(runDemo(runtime)).rejects.toThrow('retry deploy reached');
     expect(clients.commands.some((command) => command.constructor.name === 'InvokeCommand')).toBe(false);
   });
@@ -204,7 +217,7 @@ describe('disposable deployment lifecycle', () => {
     }) as never;
     let deployAttempts = 0;
     const runtime = makeAwsDemoDependencies({ account: manifest.account, region: manifest.region, postgresVersion: '17.6', durationHours: 1,
-      maxCostUsd: 1, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), accountsFile: '/unused', priceReport: '/unused' }, clients,
+      maxCostUsd: 1, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), ...expiry, accountsFile: '/unused', priceReport: '/unused' }, clients,
     async (_executable, args) => {
       if (args.includes('deploy')) throw new Error(++deployAttempts === 1 ? 'partial replacement failed' : 'retry deploy reached');
       return { stdout: '', stderr: '' };
@@ -239,6 +252,14 @@ describe('disposable deployment lifecycle', () => {
     fake.migrate = async () => { fake.events.push('migrate'); throw new Error('migration failed'); };
     await expect(runDemo(fake)).rejects.toThrow('migration failed');
     expect(fake.events).not.toContain('deploy:ready');
+    expect(fake.events).not.toContain('publish');
+  });
+
+  it('stops before publication when the application-credential probe fails', async () => {
+    const fake = deps();
+    fake.probeApplication = async () => { fake.events.push('probe-application'); throw new Error('application database probe failed'); };
+    await expect(runDemo(fake)).rejects.toThrow(/application database probe/i);
+    expect(fake.events).toContain('save:ready');
     expect(fake.events).not.toContain('publish');
   });
 
@@ -313,7 +334,7 @@ describe('disposable deployment lifecycle', () => {
           azCount: 2, cognito: 0, logging: 0, storage: 0, transfer: 0 },
       }), { mode: 0o600 });
       const probe = makeAwsPreflightProbe({ account: manifest.account, region: manifest.region, postgresVersion: '17.6',
-        durationHours: 1, maxCostUsd: 1, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), accountsFile: priceReport, priceReport }, fakeAwsClients());
+        durationHours: 1, maxCostUsd: 1, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), ...expiry, accountsFile: priceReport, priceReport }, fakeAwsClients());
       await expect(probe.costRates({ region: manifest.region, postgresVersion: '17.6' })).rejects.toThrow(/future/i);
     } finally { await rm(root, { recursive: true, force: true }); }
   });
@@ -330,7 +351,7 @@ describe('disposable deployment lifecycle', () => {
       ]), { mode: 0o600 });
       const calls: { args: readonly string[]; env?: NodeJS.ProcessEnv }[] = [];
       const runtime = makeAwsDemoDependencies({ account: manifest.account, region: manifest.region, postgresVersion: '17.6', durationHours: 1,
-        maxCostUsd: 1, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), accountsFile, priceReport: accountsFile }, fakeAwsClients(),
+        maxCostUsd: 1, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), ...expiry, accountsFile, priceReport: accountsFile }, fakeAwsClients(),
       async (_executable, args, options) => { calls.push({ args, env: options?.env }); return { stdout: 'PORTAL_REQUEST_ID:request_fixture-123\n', stderr: '' }; },
       { saveVerification: async () => {}, correlation: { observe: async () => ({ requestCount: 1, coldCount: 1, warmCount: 0, maxDurationMs: 1 }) },
         loadManualRegistration: async () => undefined });
@@ -363,7 +384,7 @@ describe('disposable deployment lifecycle', () => {
     try {
       const calls: { env?: NodeJS.ProcessEnv }[] = [];
       const runtime = makeAwsDemoDependencies({ account: manifest.account, region: manifest.region, postgresVersion: '17.6', durationHours: 1,
-        maxCostUsd: 1, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), accountsFile, priceReport: accountsFile }, fakeAwsClients(),
+        maxCostUsd: 1, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), ...expiry, accountsFile, priceReport: accountsFile }, fakeAwsClients(),
       async (_executable, _args, options) => { calls.push({ env: options?.env }); return { stdout: 'PORTAL_REQUEST_ID:request_fixture-123\n', stderr: '' }; },
       { saveVerification: async () => {}, correlation: { observe: async () => ({ requestCount: 1, coldCount: 1, warmCount: 0, maxDurationMs: 1 }) },
         loadManualRegistration: async () => undefined });
@@ -394,7 +415,7 @@ describe('disposable deployment lifecycle', () => {
         Parameters: [{ ParameterKey: 'DeploymentPhase', ParameterValue: 'ready' }] }] },
     ] });
     const runtime = makeAwsDemoDependencies({ account: manifest.account, region: manifest.region, postgresVersion: '17.6', durationHours: 1,
-      maxCostUsd: 1, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), accountsFile: '/unused', priceReport: '/unused' }, clients,
+      maxCostUsd: 1, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), ...expiry, accountsFile: '/unused', priceReport: '/unused' }, clients,
     async (_executable, args) => { commands.push(args); throw new Error('stop after command capture'); });
     await expect(runtime.deploy('bootstrap')).rejects.toThrow('stop after command capture');
     await expect(runtime.deploy('ready', manifest.outputs.FrontendUrl)).rejects.toThrow('stop after command capture');
@@ -422,7 +443,7 @@ describe('disposable deployment lifecycle', () => {
       ListStackResourcesCommand: [{ StackResourceSummaries: [] }, { StackResourceSummaries: [] }, { StackResourceSummaries: [] }],
     });
     const runtime = makeAwsDemoDependencies({ account: manifest.account, region: manifest.region, postgresVersion: '17.6', durationHours: 1,
-      maxCostUsd: 1, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), accountsFile: '/unused', priceReport: '/unused' }, clients,
+      maxCostUsd: 1, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), ...expiry, accountsFile: '/unused', priceReport: '/unused' }, clients,
     async (_executable, args) => {
       if (args.includes('deploy')) await writeFile(outputPath, JSON.stringify({ [manifest.appStack]: manifest.outputs }));
       return { stdout: '', stderr: '' };
@@ -446,11 +467,12 @@ describe('disposable deployment lifecycle', () => {
     await mkdir(new URL('../../.runtime/', import.meta.url), { recursive: true, mode: 0o700 });
     let saved = structuredClone(manifest);
     const stack = { Tags: [{ Key: 'Project', Value: manifest.projectTag }, { Key: 'SourceCommit', Value: 'a'.repeat(40) }],
+      Outputs: [{ OutputKey: 'ExpiresAt', OutputValue: expiry.expiresAt }],
       ...(observedPhase ? { Parameters: [{ ParameterKey: 'DeploymentPhase', ParameterValue: observedPhase }] } : {}) };
     const clients = fakeAwsClients({ DescribeStacksCommand: [{ Stacks: [stack] }, { Stacks: [stack] }, { Stacks: [stack] }] });
     let deployAttempts = 0;
     const runtime = makeAwsDemoDependencies({ account: manifest.account, region: manifest.region, postgresVersion: '17.6', durationHours: 1,
-      maxCostUsd: 1, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), accountsFile: '/unused', priceReport: '/unused' }, clients,
+      maxCostUsd: 1, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), ...expiry, accountsFile: '/unused', priceReport: '/unused' }, clients,
     async (_executable, args) => {
       if (args.includes('deploy')) {
         deployAttempts += 1;
@@ -496,7 +518,7 @@ describe('disposable deployment lifecycle', () => {
       return s3Send(command as never);
     }) as never;
     const runtime = makeAwsDemoDependencies({ account: manifest.account, region: manifest.region, postgresVersion: '17.6', durationHours: 1,
-      maxCostUsd: 1, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), accountsFile: '/unused', priceReport: '/unused' }, clients);
+      maxCostUsd: 1, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), ...expiry, accountsFile: '/unused', priceReport: '/unused' }, clients);
     const deployed = { ...manifest, outputs: { FrontendUrl: frontend, UserPoolId: 'eu-north-1_fixture', ClientId: 'client',
       Issuer: 'https://cognito-idp.eu-north-1.amazonaws.com/eu-north-1_fixture', CognitoDomain: 'https://fixture.auth.eu-north-1.amazoncognito.com',
       WebBucketName: 'bucket', DistributionId: 'distribution' } };
@@ -522,7 +544,7 @@ describe('disposable deployment lifecycle', () => {
       ], Parameters: [{ ParameterKey: 'DeploymentPhase', ParameterValue: 'bootstrap' }],
       Outputs: [{ OutputKey: 'FrontendUrl', OutputValue: manifest.outputs.FrontendUrl }] }] }] });
       const runtime = makeAwsDemoDependencies({ account: manifest.account, region: manifest.region, postgresVersion: '17.6', durationHours: 1,
-        maxCostUsd: 1, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), accountsFile: '/unused', priceReport: '/unused' }, clients,
+        maxCostUsd: 1, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), ...expiry, accountsFile: '/unused', priceReport: '/unused' }, clients,
       async () => { await writeFile(new URL('../../.runtime/cdk-outputs.json', import.meta.url), '{broken'); return { stdout: '', stderr: '' }; });
       await expect(runtime.deploy('bootstrap')).rejects.toThrow();
       await expect(loadDeploymentManifest()).resolves.toMatchObject({ phase: 'bootstrap', outputs: { FrontendUrl: manifest.outputs.FrontendUrl } });
@@ -549,7 +571,7 @@ describe('disposable deployment lifecycle', () => {
         throw new Error('inventory unavailable');
       };
       const runtime = makeAwsDemoDependencies({ account: manifest.account, region: manifest.region, postgresVersion: '17.6', durationHours: 1,
-        maxCostUsd: 1, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), accountsFile: '/unused', priceReport: '/unused' }, clients,
+        maxCostUsd: 1, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), ...expiry, accountsFile: '/unused', priceReport: '/unused' }, clients,
       async () => { await writeFile(new URL('../../.runtime/cdk-outputs.json', import.meta.url), JSON.stringify({ [manifest.appStack]: manifest.outputs })); return { stdout: '', stderr: '' }; });
       await expect(runtime.deploy('bootstrap')).rejects.toThrow('inventory unavailable');
       await expect(loadDeploymentManifest()).resolves.toMatchObject({ phase: 'bootstrap' });

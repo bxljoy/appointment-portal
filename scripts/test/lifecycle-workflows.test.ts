@@ -57,5 +57,14 @@ describe('manual disposable environment workflows', () => {
     expect(text.indexOf('pnpm demo:destroy -- --dry-run')).toBeLessThan(text.indexOf('pnpm demo:destroy -- --force-disposable-secrets'));
     expect(text).toContain('pnpm demo:verify-cleanup');
     expect(text.indexOf('github.ref_name != vars.DEMO_BRANCH')).toBeLessThan(text.indexOf('configure-aws-credentials'));
+    expect(text).toContain('pnpm demo:restore-manifest');
+    expect(text).toContain('${{ inputs.demo_head_sha }}');
+    expect(text.indexOf('pnpm demo:restore-manifest')).toBeLessThan(text.indexOf('configure-aws-credentials'));
+  });
+
+  it('runs the high-severity dependency audit before deployment', async () => {
+    const text = JSON.stringify(await workflow('demo'));
+    expect(text).toContain('pnpm audit --audit-level high');
+    expect(text.indexOf('pnpm audit --audit-level high')).toBeLessThan(text.indexOf('pnpm demo:deploy'));
   });
 });

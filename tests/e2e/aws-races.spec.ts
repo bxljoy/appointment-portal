@@ -55,3 +55,41 @@ test('real patients race, permissions hold, cancellation reopens, and clinician 
     expect(ownSlots.items).toContainEqual(expect.objectContaining({ id: reopened.id, status: 'withdrawn', isBooked: false }));
   } finally { await Promise.all(Object.values(clients).map((client) => client.dispose())); }
 });
+
+test('deployed authorization conceals foreign resources and rejects wrong-role and forged identity operations @aws', async ({ browser, page, playwright }) => {
+  test.setTimeout(3 * 60_000);
+  await page.goto('/');
+  const aliases = ['patient-a', 'patient-b', 'clinician-a', 'clinician-b'] as const;
+  const tokens = new Map<string, string>();
+  for (const alias of aliases) {
+    const context = await browser.newContext({ baseURL: process.env.PORTAL_E2E_AWS_URL, storageState: { cookies: [], origins: [] } });
+    try { const login = await context.newPage(); await login.goto('/'); tokens.set(alias, (await acquireTokens(login, alias)).access_token); }
+    finally { await context.close(); }
+  }
+  const clients = Object.fromEntries(await Promise.all(aliases.map(async (alias) => [alias, await apiContext(playwright, tokens.get(alias)!)]))) as Record<typeof aliases[number], Awaited<ReturnType<typeof apiContext>>>;
+  const checked = async (response: Awaited<ReturnType<typeof clients['patient-a']['get']>>, status: number) => { recordRequestId(response); expect(response.status()).toBe(status); };
+  try {
+    const identities = Object.fromEntries(await Promise.all(aliases.map(async (alias) => {
+      const response = await clients[alias].get('/api/me'); await checked(response, 200); return [alias, await json<Me>(response)];
+    }))) as Record<typeof aliases[number], Me>;
+    await checked(await clients['patient-a'].post('/api/availability', { data: { startAt: futureStart(101) } }), 403);
+    await checked(await clients['patient-a'].post('/api/availability', { data: { startAt: futureStart(102), clinicianId: identities['clinician-a'].id, role: 'clinician' } }), 400);
+    const slotResponse = await clients['clinician-a'].post('/api/availability', { data: { startAt: futureStart(103) } });
+    await checked(slotResponse, 201); const slot = await json<Slot>(slotResponse);
+    await checked(await clients['patient-a'].post(`/api/availability/${slot.id}/withdraw`), 403);
+    await checked(await clients['clinician-b'].post(`/api/availability/${slot.id}/withdraw`), 404);
+    await checked(await clients['clinician-b'].post('/api/appointments', { data: { slotId: slot.id } }), 403);
+    const forged = await clients['patient-a'].post('/api/appointments', { data: { slotId: slot.id, patientId: identities['patient-b'].id, role: 'patient' } });
+    await checked(forged, 400);
+    const bookingResponse = await clients['patient-a'].post('/api/appointments', { data: { slotId: slot.id } });
+    await checked(bookingResponse, 201); const booking = await json<Appointment>(bookingResponse);
+    await checked(await clients['clinician-b'].post(`/api/appointments/${booking.id}/cancel`, { data: { withdrawSlot: true } }), 404);
+    const ownerAppointmentsResponse = await clients['patient-a'].get('/api/appointments?limit=100'); await checked(ownerAppointmentsResponse, 200);
+    const ownerAppointments = await json<{ items: Appointment[] }>(ownerAppointmentsResponse);
+    expect(ownerAppointments.items).toContainEqual(expect.objectContaining({ id: booking.id, status: 'booked' }));
+    const ownerSlotsResponse = await clients['clinician-a'].get('/api/availability?limit=100'); await checked(ownerSlotsResponse, 200);
+    const ownerSlots = await json<{ items: Slot[] }>(ownerSlotsResponse);
+    expect(ownerSlots.items).toContainEqual(expect.objectContaining({ id: slot.id, status: 'open', isBooked: true }));
+    await checked(await clients['clinician-a'].post(`/api/appointments/${booking.id}/cancel`, { data: { withdrawSlot: true } }), 200);
+  } finally { await Promise.all(Object.values(clients).map((client) => client.dispose())); }
+});

@@ -5,7 +5,7 @@ import { PortalStack } from '../lib/portal-stack.js';
 
 const valid = {
   account: '111111111111', region: 'eu-north-1', postgresVersion: '17.6',
-  phase: 'bootstrap' as const, qualifier: 'portal123',
+  phase: 'bootstrap' as const, qualifier: 'portal123', expiresAt: '2030-06-01T18:00:00.000Z',
 };
 
 describe('deployment configuration', () => {

@@ -237,9 +237,11 @@ describe('inventory-driven cleanup', () => {
     expect(adapter.canDeleteResource(result.remaining[0]!)).toBe(false);
   });
 
-  it('enumerates every page of versions and delete markers in recorded S3 buckets', async () => {
-    const bucket = 'apptdemo-assets-111111111111-eu-north-1';
+  it('enumerates every page of versions and delete markers only from a live tag-verified S3 bucket', async () => {
+    const bucket = 'cdk-apptdemo-assets-111111111111-eu-north-1';
     const clients = fakeAwsClients({
+      ListBucketsCommand: [{ Buckets: [{ Name: bucket }] }],
+      GetBucketTaggingCommand: [{ TagSet: [{ Key: 'Project', Value: manifest.projectTag }] }],
       ListObjectVersionsCommand: [
         {
           Versions: [{ Key: 'asset.js', VersionId: 'v1' }],
@@ -249,10 +251,7 @@ describe('inventory-driven cleanup', () => {
         { DeleteMarkers: [{ Key: 'old.js', VersionId: 'v2' }] },
       ],
     });
-    const deployed = {
-      ...manifest,
-      resources: [{ type: 'Bootstrap::AWS::S3::Bucket', id: bucket, owned: true }],
-    };
+    const deployed = { ...manifest, resources: [] };
     const result = await verifyCleanup(deployed, new AwsInventoryAdapter(deployed, clients), {
       includeInfrastructure: true,
     });
@@ -261,6 +260,23 @@ describe('inventory-driven cleanup', () => {
       expect.objectContaining({ type: 'Bootstrap::AWS::S3::DeleteMarker', id: JSON.stringify({ bucket, key: 'old.js', versionId: 'v2' }) }),
       expect.objectContaining({ type: 'Bootstrap::AWS::S3::Bucket', id: bucket }),
     ]));
+  });
+
+  it('does not derive S3 object deletion authority from stack membership without a live bucket tag', async () => {
+    const bucket = 'appointmentportal-membership-only';
+    const clients = fakeAwsClients({
+      DescribeStacksCommand: [
+        { Stacks: [{ StackName: manifest.appStack, Tags: [{ Key: 'Project', Value: manifest.projectTag }] }] },
+        { Stacks: [] }, { Stacks: [] },
+      ],
+      ListStackResourcesCommand: [{ StackResourceSummaries: [{ ResourceType: 'AWS::S3::Bucket', PhysicalResourceId: bucket }] }],
+      ListBucketsCommand: [{ Buckets: [{ Name: bucket }] }], GetBucketTaggingCommand: [{ TagSet: [] }],
+      ListObjectVersionsCommand: [{ Versions: [{ Key: 'untrusted', VersionId: 'v1' }] }],
+    });
+    const result = await verifyCleanup(manifest, new AwsInventoryAdapter(manifest, clients));
+    expect(result.remaining).toContainEqual(expect.objectContaining({ type: 'Application::AWS::S3::Bucket', id: bucket, owned: true }));
+    expect(result.remaining.some((resource) => resource.type.endsWith('AWS::S3::ObjectVersion'))).toBe(false);
+    expect(clients.commands.some((command) => command.constructor.name === 'ListObjectVersionsCommand')).toBe(false);
   });
 
   it('does not claim cleanup while a project snapshot remains', async () => {
@@ -338,6 +354,30 @@ describe('inventory-driven cleanup', () => {
     const adapter = new AwsInventoryAdapter(manifest, clients);
     await expect(adapter.deleteResource({ type: 'AWS::RDS::DBInstance', id: 'forged', owned: true })).rejects.toThrow(/verified ownership/i);
     expect(clients.commands.some((command) => command.constructor.name === 'DeleteDBInstanceCommand')).toBe(false);
+  });
+
+  it('does not trust forged manifest ownership for prefix-matching resources or OIDC providers', async () => {
+    const forged = { ...manifest, resources: [
+      { type: 'Application::AWS::S3::Bucket', id: 'appointmentportal-unrelated', owned: true },
+      { type: 'Application::AWS::Logs::LogGroup', id: '/appointment-portal/unrelated', arn: 'arn:log:unrelated', owned: true },
+      { type: 'Application::AWS::SecretsManager::Secret', id: 'appointmentportal-unrelated', arn: 'arn:secret:unrelated', owned: true },
+      { type: 'Delivery::AWS::IAM::OIDCProvider', id: 'token.actions.githubusercontent.com', arn: 'arn:oidc:shared', owned: true },
+    ] };
+    const clients = fakeAwsClients({
+      ListBucketsCommand: [{ Buckets: [{ Name: 'appointmentportal-unrelated' }] }], GetBucketTaggingCommand: [{ TagSet: [] }],
+      DescribeLogGroupsCommand: [{ logGroups: [{ logGroupName: '/appointment-portal/unrelated', logGroupArn: 'arn:log:unrelated' }] }, { logGroups: [] }],
+      ListTagsForResourceCommand: [{ tags: {} }],
+      ListSecretsCommand: [{ SecretList: [{ Name: 'appointmentportal-unrelated', ARN: 'arn:secret:unrelated' }] }],
+      ListOpenIDConnectProvidersCommand: [{ OpenIDConnectProviderList: [{ Arn: 'arn:oidc:shared' }] }],
+      GetOpenIDConnectProviderCommand: [{ Url: 'token.actions.githubusercontent.com', ClientIDList: ['sts.amazonaws.com'] }],
+    });
+    const adapter = new AwsInventoryAdapter(forged, clients);
+    const result = await cleanup(forged, adapter, { dryRun: true, includeInfrastructure: true });
+    expect(result.targets).toEqual([]);
+    expect(result.unverified.map((resource) => resource.id)).toEqual(expect.arrayContaining([
+      'appointmentportal-unrelated', '/appointment-portal/unrelated', 'token.actions.githubusercontent.com',
+    ]));
+    expect(clients.commands.some((command) => command.constructor.name.startsWith('Delete'))).toBe(false);
   });
 
   it('refuses a symlinked pre-destroy archive without changing its target', async () => {

@@ -11,6 +11,7 @@ const config = parsePortalConfig({
   postgresVersion: app.node.tryGetContext('postgresVersion'),
   phase: app.node.tryGetContext('phase'),
   qualifier: app.node.tryGetContext('qualifier'),
+  expiresAt: app.node.tryGetContext('expiresAt'),
   frontendUrl: app.node.tryGetContext('frontendUrl'),
 });
 const sourceCommit = app.node.tryGetContext('sourceCommit') as unknown;

@@ -17,7 +17,7 @@ try {
     const output = join(root, 'infra/cdk.out', phase);
     execFileSync(process.execPath, [join(root, 'infra/node_modules/aws-cdk/bin/cdk'), 'synth', '--app', 'node app.mjs', '--no-lookups', '--no-notices', '-q',
       '-c', 'account=111111111111', '-c', 'region=eu-north-1', '-c', 'postgresVersion=17.6', '-c', 'qualifier=apptdemo', '-c', `phase=${phase}`,
-      '-c', 'repository=OWNER/REPOSITORY', '-c', 'branch=main',
+      '-c', 'repository=OWNER/REPOSITORY', '-c', 'branch=main', '-c', 'expiresAt=2030-06-01T18:00:00.000Z',
       ...(phase === 'ready' ? ['-c', 'frontendUrl=https://demo.cloudfront.net'] : []), '--output', output], { cwd: temporary, env, stdio: 'inherit' });
     const manifest = JSON.parse(await readFile(join(output, 'manifest.json'), 'utf8')) as { missing?: unknown[] };
     if (manifest.missing?.length) throw new Error('Offline synthesis requested external context.');

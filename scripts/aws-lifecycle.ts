@@ -5,8 +5,8 @@ import { CloudFormationClient, DeleteStackCommand, DescribeStacksCommand, ListSt
 import { CloudFrontClient, CreateInvalidationCommand, waitUntilInvalidationCompleted } from '@aws-sdk/client-cloudfront';
 import { DeleteVpcEndpointsCommand, DescribeNetworkInterfacesCommand, DescribeVpcEndpointsCommand, EC2Client, type DescribeNetworkInterfacesCommandOutput } from '@aws-sdk/client-ec2';
 import { DeleteRepositoryCommand, DescribeRepositoriesCommand, ECRClient, ListTagsForResourceCommand as EcrListTagsForResourceCommand } from '@aws-sdk/client-ecr';
-import { DeleteOpenIDConnectProviderCommand, GetOpenIDConnectProviderCommand, IAMClient, ListOpenIDConnectProvidersCommand } from '@aws-sdk/client-iam';
-import { GetAccountSettingsCommand, LambdaClient } from '@aws-sdk/client-lambda';
+import { GetOpenIDConnectProviderCommand, IAMClient, ListOpenIDConnectProvidersCommand } from '@aws-sdk/client-iam';
+import { GetAccountSettingsCommand, InvokeCommand, LambdaClient } from '@aws-sdk/client-lambda';
 import { DeleteParameterCommand, DescribeParametersCommand, ListTagsForResourceCommand as SsmListTagsForResourceCommand, SSMClient } from '@aws-sdk/client-ssm';
 import { DeleteDBInstanceAutomatedBackupCommand, DeleteDBInstanceCommand, DeleteDBProxyCommand, DeleteDBSnapshotCommand, DescribeDBEngineVersionsCommand, DescribeDBInstanceAutomatedBackupsCommand, DescribeDBInstancesCommand, DescribeDBProxiesCommand, DescribeDBProxyTargetsCommand, DescribeDBSnapshotsCommand, DescribeOrderableDBInstanceOptionsCommand, ListTagsForResourceCommand as RdsListTagsForResourceCommand, RDSClient, type DescribeDBInstanceAutomatedBackupsCommandOutput, type DescribeDBInstancesCommandOutput, type DescribeDBProxiesCommandOutput } from '@aws-sdk/client-rds';
 import { ChecksumMode, DeleteBucketCommand, DeleteObjectsCommand, GetBucketTaggingCommand, HeadBucketCommand, HeadObjectCommand, ListBucketsCommand, ListObjectVersionsCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
@@ -28,11 +28,18 @@ import { loadManualRegistration, type ManualRegistrationEvidence } from './manua
 
 const configSchema = z.strictObject({
   account: z.string().regex(/^\d{12}$/), region: z.string().regex(/^[a-z]{2}(?:-[a-z]+)+-[1-9]\d*$/),
-  postgresVersion: z.string().regex(/^17\.[1-9]\d*$/), durationHours: z.number().positive().max(24), maxCostUsd: z.number().positive(),
+  postgresVersion: z.string().regex(/^17\.[1-9]\d*$/), durationHours: z.number().positive().max(6), maxCostUsd: z.number().positive(),
   repository: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/), branch: z.string().regex(/^[A-Za-z0-9._/-]+$/),
   sourceCommit: z.string().regex(/^[a-f0-9]{40}$/),
+  expiresAt: z.iso.datetime({ offset: true }).refine((value) => value.endsWith('Z')),
+  createdAt: z.iso.datetime({ offset: true }).refine((value) => value.endsWith('Z')),
   accountsFile: z.string().min(1), priceReport: z.string().min(1),
   oidcProviderArn: z.string().startsWith('arn:aws:iam::').optional(),
+}).superRefine((value, context) => {
+  const delta = new Date(value.expiresAt).getTime() - new Date(value.createdAt).getTime();
+  if (!Number.isFinite(delta) || delta <= 0 || delta > value.durationHours * 60 * 60_000 || delta > 6 * 60 * 60_000) {
+    context.addIssue({ code: 'custom', path: ['expiresAt'], message: 'Expiry must enforce the configured lifetime of no more than six hours.' });
+  }
 });
 export type AwsDemoInput = z.infer<typeof configSchema>;
 
@@ -64,7 +71,11 @@ const clientsFor = (region: string): AwsClients => ({
   sts: new STSClient({ region }), logs: new CloudWatchLogsClient({ region }), cognito: new CognitoIdentityProviderClient({ region }),
 });
 
-export const readAwsDemoInput = async (path: string): Promise<AwsDemoInput> => configSchema.parse(JSON.parse(await readPrivateFile(path)));
+export const readAwsDemoInput = async (path: string): Promise<AwsDemoInput> => {
+  const input = configSchema.parse(JSON.parse(await readPrivateFile(path)));
+  if (new Date(input.expiresAt).getTime() <= Date.now()) throw new Error('Demo maximum lifetime has already expired; prepare a fresh configuration.');
+  return input;
+};
 
 export const makeAwsPreflightProbe = (input: AwsDemoInput, clients: AwsClients = clientsFor(input.region), runner: ProcessRunner = runProcess): PreflightProbe => ({
   async identity() { return z.string().regex(/^\d{12}$/).parse((await clients.sts.send(new GetCallerIdentityCommand({}))).Account); },
@@ -98,6 +109,7 @@ const contextArgs = (input: AwsDemoInput, phase: 'bootstrap' | 'ready', frontend
   '-c', `account=${input.account}`, '-c', `region=${input.region}`, '-c', `postgresVersion=${input.postgresVersion}`,
   '-c', `phase=${phase}`, '-c', `qualifier=${QUALIFIER}`, ...(input.sourceCommit ? ['-c', `sourceCommit=${input.sourceCommit}`] : []),
   ...(frontendUrl ? ['-c', `frontendUrl=${frontendUrl}`] : []),
+  '-c', `expiresAt=${input.expiresAt}`,
 ];
 
 export const makeAwsDemoDependencies = (input: AwsDemoInput, clients = clientsFor(input.region), runner: ProcessRunner = runProcess,
@@ -149,6 +161,7 @@ export const makeAwsDemoDependencies = (input: AwsDemoInput, clients = clientsFo
       const outputsFile = z.record(z.string(), z.record(z.string(), z.string())).parse(JSON.parse(await readPrivateFile(outputPath)));
       const outputs = outputsFile[APP_STACK];
       if (!outputs) throw new Error('CDK outputs did not contain the application stack.');
+      if (outputs.ExpiresAt !== input.expiresAt) throw new Error('Deployed expiry safeguard does not match the configured maximum lifetime.');
       await persistRecovery(live.phase, outputs, []);
       const application = await listStackResources(clients.cloudformation, APP_STACK, 'Application::');
       const toolkit = await listStackResources(clients.cloudformation, TOOLKIT_STACK, 'Bootstrap::');
@@ -157,7 +170,8 @@ export const makeAwsDemoDependencies = (input: AwsDemoInput, clients = clientsFo
         account: input.account, region: input.region, projectTag: PROJECT_TAG, appStack: APP_STACK,
         deliveryStack: DELIVERY_STACK, toolkitStack: TOOLKIT_STACK, qualifier: QUALIFIER, phase: live.phase, outputs,
         resources: deduplicateResources([...application, ...toolkit, ...delivery]),
-        ...(input.sourceCommit ? { sourceCommit: input.sourceCommit } : {}),
+        ...(input.sourceCommit ? { sourceCommit: input.sourceCommit } : {}), expiresAt: input.expiresAt,
+        repository: input.repository, branch: input.branch,
       };
       return activeManifest;
     },
@@ -169,6 +183,14 @@ export const makeAwsDemoDependencies = (input: AwsDemoInput, clients = clientsFo
     },
     waitForProxy: async () => waitForProxy(clients.rds, requiredManifestOutput(activeManifest, 'ProxyName')),
     verifyMigration: async () => { await invokeMigration(requiredManifestOutput(activeManifest, 'MigrationFunctionName'), { action: 'migrate' }, clients.lambda); },
+    probeApplication: async (manifest) => {
+      const accounts = await readControlledAccounts(input.accountsFile);
+      const patient = accounts.find((account) => account.alias === 'patient-a');
+      if (!patient) throw new Error('Application database probe fixture is unavailable.');
+      const credential = await credentials.get(requiredManifestOutput(manifest, 'UserPoolId'), patient.email);
+      if (!credential?.sub) throw new Error('Application database probe fixture is unavailable.');
+      await probeApplicationDatabase(requiredManifestOutput(manifest, 'ProfilesFunctionName'), credential.sub, clients.lambda);
+    },
     publish: async (manifest) => publishBuiltFrontend(manifest, clients),
     verify: async (manifest) => {
       const frontendUrl = requiredManifestOutput(manifest, 'FrontendUrl');
@@ -193,11 +215,24 @@ export const makeAwsDemoDependencies = (input: AwsDemoInput, clients = clientsFo
     activeManifest = {
       account: input.account, region: input.region, projectTag: PROJECT_TAG, appStack: APP_STACK, deliveryStack: DELIVERY_STACK,
       toolkitStack: TOOLKIT_STACK, qualifier: QUALIFIER, phase, outputs, resources,
-      ...(input.sourceCommit ? { sourceCommit: input.sourceCommit } : {}),
+      ...(input.sourceCommit ? { sourceCommit: input.sourceCommit } : {}), expiresAt: input.expiresAt,
+      repository: input.repository, branch: input.branch,
     };
     await (manifestStore.save ?? saveDeploymentManifest)(activeManifest);
   }
 };
+
+export async function probeApplicationDatabase(functionName: string, sub: string, lambda: Pick<LambdaClient, 'send'>): Promise<void> {
+  const event = { version: '2.0', routeKey: 'GET /api/me', rawPath: '/api/me', rawQueryString: '', headers: {},
+    requestContext: { requestId: 'deployment-application-probe', authorizer: { jwt: { claims: { sub: z.uuid().parse(sub) } } }, http: { method: 'GET' } } };
+  const result = await lambda.send(new InvokeCommand({ FunctionName: z.string().regex(/^AppointmentPortal-profiles$/).parse(functionName),
+    InvocationType: 'RequestResponse', Payload: Buffer.from(JSON.stringify(event)) }));
+  if (result.StatusCode !== 200 || result.FunctionError || !result.Payload) throw new Error('Application database probe failed.');
+  try {
+    const response = z.object({ statusCode: z.literal(200), body: z.string() }).parse(JSON.parse(Buffer.from(result.Payload).toString('utf8')));
+    z.object({ id: z.uuid(), role: z.literal('patient') }).parse(JSON.parse(response.body));
+  } catch { throw new Error('Application database probe failed.'); }
+}
 
 const inspectStackOwnership = async (client: CloudFormationClient, name: string): Promise<StackInspection> => {
   try {
@@ -343,9 +378,7 @@ const isNoSuchTagSet = (error: unknown) => typeof error === 'object' && error !=
 export class AwsInventoryAdapter implements InventoryAdapter {
   private resources?: ResourceRecord[];
   private readonly verifiedOwned = new Set<string>();
-  constructor(readonly manifest: DeploymentManifest, readonly clients: AwsClients = clientsFor(manifest.region), readonly options: { forceDeleteSecrets?: boolean; archivePath?: string; sleep?: (milliseconds: number) => Promise<void> } = {}) {
-    for (const resource of manifest.resources) if (resource.owned) this.verifiedOwned.add(this.resourceKey(resource));
-  }
+  constructor(readonly manifest: DeploymentManifest, readonly clients: AwsClients = clientsFor(manifest.region), readonly options: { forceDeleteSecrets?: boolean; archivePath?: string; sleep?: (milliseconds: number) => Promise<void> } = {}) {}
 
   async account() { return z.string().regex(/^\d{12}$/).parse((await this.clients.sts.send(new GetCallerIdentityCommand({}))).Account); }
   async page(cursor?: string): Promise<InventoryPage> {
@@ -393,10 +426,8 @@ export class AwsInventoryAdapter implements InventoryAdapter {
     }
     else if (type === 'AWS::ECR::Repository') await this.clients.ecr.send(new DeleteRepositoryCommand({ repositoryName: resource.id, force: true }));
     else if (type === 'AWS::SSM::Parameter') await this.clients.ssm.send(new DeleteParameterCommand({ Name: resource.id }));
-    else if (type === 'AWS::IAM::OIDCProvider') {
-      if (!resource.owned || !resource.arn) throw new Error('Shared or unidentified OIDC providers cannot be deleted.');
-      await this.clients.iam.send(new DeleteOpenIDConnectProviderCommand({ OpenIDConnectProviderArn: resource.arn }));
-    } else if (type === 'AWS::S3::ObjectVersion' || type === 'AWS::S3::DeleteMarker') {
+    else if (type === 'AWS::IAM::OIDCProvider') throw new Error('Shared OIDC providers cannot be deleted by project cleanup.');
+    else if (type === 'AWS::S3::ObjectVersion' || type === 'AWS::S3::DeleteMarker') {
       const parsed = z.strictObject({ bucket: z.string(), key: z.string(), versionId: z.string() }).parse(JSON.parse(resource.id));
       const result = await this.clients.s3.send(new DeleteObjectsCommand({ Bucket: parsed.bucket, Delete: { Objects: [{ Key: parsed.key, VersionId: parsed.versionId }], Quiet: true } }));
       if (result.Errors?.length) throw new Error(`Delete failed for S3 version in ${parsed.bucket}.`);
@@ -408,7 +439,7 @@ export class AwsInventoryAdapter implements InventoryAdapter {
   canDeleteResource(resource: ResourceRecord) {
     return new Set(['AWS::RDS::DBSnapshot', 'AWS::RDS::DBInstanceAutomatedBackup', 'AWS::RDS::DBInstance', 'AWS::RDS::DBProxy',
       'AWS::SecretsManager::Secret', 'AWS::Logs::LogGroup', 'AWS::EC2::VPCEndpoint', 'AWS::ECR::Repository', 'AWS::SSM::Parameter',
-      'AWS::IAM::OIDCProvider', 'AWS::S3::ObjectVersion', 'AWS::S3::DeleteMarker', 'AWS::S3::Bucket'])
+      'AWS::S3::ObjectVersion', 'AWS::S3::DeleteMarker', 'AWS::S3::Bucket'])
       .has(resource.type.replace(/^(?:Application|Bootstrap|Delivery)::/, ''));
   }
 
@@ -428,7 +459,8 @@ export class AwsInventoryAdapter implements InventoryAdapter {
   private async inventory(): Promise<ResourceRecord[]> {
     const normalizedType = (type: string) => type.replace(/^(?:Application|Bootstrap|Delivery)::/, '');
     const identityKeys = (type: string, id: string, arn?: string) => [id, ...(arn ? [arn] : [])].map((value) => `${normalizedType(type)}\0${value}`);
-    const knownOwned = new Set(this.manifest.resources.filter((item) => item.owned).flatMap((item) => identityKeys(item.type, item.id, item.arn)));
+    const knownOwned = new Set<string>();
+    const claimedOwned = new Set(this.manifest.resources.filter((item) => item.owned).flatMap((item) => identityKeys(item.type, item.id, item.arn)));
     const knownShared = new Set(this.manifest.resources.filter((item) => !item.owned).flatMap((item) => identityKeys(item.type, item.id, item.arn)));
     const hasProjectTag = (tags?: readonly { Key?: string; Value?: string }[]) => tags?.some((tag) => tag.Key === 'Project' && tag.Value === PROJECT_TAG) ?? false;
     const ownership = (type: string, id: string, arn?: string, tags?: readonly { Key?: string; Value?: string }[]) => {
@@ -439,13 +471,15 @@ export class AwsInventoryAdapter implements InventoryAdapter {
     const explicitlyShared = (type: string, id: string, arn?: string) => identityKeys(type, id, arn).some((key) => knownShared.has(key));
     const discovered = (type: string, id: string, arn: string | undefined, tags: readonly { Key?: string; Value?: string }[] | undefined,
       outputMatch = false): ResourceRecord | undefined => {
+      const keys = identityKeys(type, id, arn);
       const owned = ownership(type, id, arn, tags);
       if (owned) return { type: `Application::${type}`, id, arn, owned: true };
-      if (outputMatch) return { type: `Application::${type}`, id, arn, owned: false, state: 'unverified' };
+      if (outputMatch || keys.some((key) => claimedOwned.has(key))) return { type: `Application::${type}`, id, arn, owned: false, state: 'unverified' };
       if (explicitlyShared(type, id, arn)) return { type, id, arn, owned: false };
       return undefined;
     };
     const resources: ResourceRecord[] = [];
+    const tagVerifiedBuckets = new Set<string>();
     const stackNames: string[] = [this.manifest.appStack, ...(this.manifest.deliveryStack ? [this.manifest.deliveryStack] : []), this.manifest.toolkitStack];
     for (const name of stackNames) {
       const prefix = name === this.manifest.appStack ? 'Application::' : name === this.manifest.deliveryStack ? 'Delivery::' : 'Bootstrap::';
@@ -534,13 +568,14 @@ export class AwsInventoryAdapter implements InventoryAdapter {
         let tags: { Key?: string; Value?: string }[] | undefined;
         try { tags = (await this.clients.s3.send(new GetBucketTaggingCommand({ Bucket: bucket.Name }))).TagSet; }
         catch (error) { if (!isNoSuchTagSet(error) && !isNotFound(error)) throw error; }
+        if (hasProjectTag(tags)) tagVerifiedBuckets.add(bucket.Name);
         const record = discovered('AWS::S3::Bucket', bucket.Name, undefined, tags);
         if (record) resources.push({ ...record,
           type: bucket.Name.startsWith(`cdk-${this.manifest.qualifier}-`) ? 'Bootstrap::AWS::S3::Bucket' : record.type });
       }
       bucketToken = page.ContinuationToken;
     } while (bucketToken);
-    const knownBuckets = new Map([...this.manifest.resources, ...resources].filter((item) => item.type.endsWith('AWS::S3::Bucket') && item.owned)
+    const knownBuckets = new Map(resources.filter((item) => item.type.endsWith('AWS::S3::Bucket') && item.owned && tagVerifiedBuckets.has(item.id))
       .map((item) => [item.id, item.type.startsWith('Bootstrap::') ? 'Bootstrap::' : item.type.startsWith('Delivery::') ? 'Delivery::' : 'Application::']));
     for (const [bucket, prefix] of knownBuckets) {
       try { await this.clients.s3.send(new HeadBucketCommand({ Bucket: bucket })); }
@@ -575,7 +610,7 @@ export class AwsInventoryAdapter implements InventoryAdapter {
       ec2Token = page.NextToken;
     } while (ec2Token);
     let ecrToken: string | undefined;
-    const knownRepositories = new Set([...this.manifest.resources, ...resources].filter((item) => item.type.endsWith('AWS::ECR::Repository') && item.owned).map((item) => item.id));
+    const knownRepositories = new Set(resources.filter((item) => item.type.endsWith('AWS::ECR::Repository') && item.owned).map((item) => item.id));
     do {
       const page = await this.clients.ecr.send(new DescribeRepositoriesCommand({ nextToken: ecrToken }));
       for (const repository of page.repositories ?? []) if (repository.repositoryName && repository.repositoryArn) {
@@ -600,8 +635,9 @@ export class AwsInventoryAdapter implements InventoryAdapter {
       if (!provider.Arn) continue;
       const details = await this.clients.iam.send(new GetOpenIDConnectProviderCommand({ OpenIDConnectProviderArn: provider.Arn }));
       if (details.Url === 'token.actions.githubusercontent.com') {
-        const owned = ownership('AWS::IAM::OIDCProvider', details.Url, provider.Arn);
-        resources.push({ type: owned ? 'Delivery::AWS::IAM::OIDCProvider' : 'AWS::IAM::OIDCProvider', id: details.Url, arn: provider.Arn, owned });
+        const claimed = identityKeys('AWS::IAM::OIDCProvider', details.Url, provider.Arn).some((key) => claimedOwned.has(key));
+        resources.push({ type: 'AWS::IAM::OIDCProvider', id: details.Url, arn: provider.Arn, owned: false,
+          ...(claimed ? { state: 'unverified' as const } : {}) });
       }
     }
     const result = deduplicateResources(resources);
