@@ -126,8 +126,9 @@ or push is implied by local validation.
 
 ## Opt-in managed login
 
-The `aws` project is disabled unless `PORTAL_E2E_AWS=1`; it never starts the local
-adapter or resets a database. Task 15 supplies four managed-login/logout smoke
+The `aws` and `aws-mobile` projects are disabled unless `PORTAL_E2E_AWS=1`; they
+never start the local adapter or reset a database. Task 15 supplies four
+managed-login/logout smoke
 tests. Full deployed acceptance, self-registration/email verification, authorization
 and deployed race evidence belong to the deployment verification run.
 
@@ -150,7 +151,7 @@ submits the controlled credentials only at the configured Cognito managed-login
 origin. The managed-login selectors must be verified against the actual deployment.
 
 ```sh
-PORTAL_E2E_AWS=1 corepack pnpm@11.22.0 exec playwright test --project=aws
+PORTAL_E2E_AWS=1 corepack pnpm@11.22.0 exec playwright test --project=aws --project=aws-mobile
 ```
 
 AWS traces, videos, screenshots, HARs and saved storage state are prohibited by the

@@ -24,5 +24,6 @@ export default defineConfig({
     { name: 'local-desktop', grepInvert: /@aws/, use: { viewport: { width: 1280, height: 900 }, trace: 'retain-on-failure' } },
     { name: 'local-mobile', grepInvert: /@aws/, use: { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, trace: 'retain-on-failure' } },
     { name: 'aws', grep: /@aws/, testIgnore: process.env.PORTAL_E2E_AWS === '1' ? [] : ['**/*'], use: { baseURL: process.env.PORTAL_E2E_AWS_URL, viewport: { width: 1280, height: 900 }, trace: 'off', video: 'off', screenshot: 'off' } },
+    { name: 'aws-mobile', grep: /@aws/, testIgnore: process.env.PORTAL_E2E_AWS === '1' ? [] : ['**/*'], use: { baseURL: process.env.PORTAL_E2E_AWS_URL, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, trace: 'off', video: 'off', screenshot: 'off' } },
   ],
 });

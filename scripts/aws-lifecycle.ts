@@ -22,6 +22,7 @@ import { publishFrontend, type PublishFile } from './publish.js';
 import { APP_STACK, DELIVERY_STACK, PROJECT_TAG, QUALIFIER, TOOLKIT_STACK, deduplicateResources, saveDeploymentManifest, type DeploymentManifest, type InventoryAdapter, type InventoryPage, type ResourceRecord } from './lifecycle-types.js';
 import type { DemoConfig, DemoDependencies, StackInspection } from './deploy.js';
 import { readPrivateFile, writePrivateJson } from './private-file.js';
+import { playwrightVerificationAdapter, verifyAws } from './verify-aws.js';
 
 const configSchema = z.strictObject({
   account: z.string().regex(/^\d{12}$/), region: z.string().regex(/^[a-z]{2}(?:-[a-z]+)+-[1-9]\d*$/),
@@ -98,7 +99,8 @@ const contextArgs = (input: AwsDemoInput, phase: 'bootstrap' | 'ready', frontend
 ];
 
 export const makeAwsDemoDependencies = (input: AwsDemoInput, clients = clientsFor(input.region), runner: ProcessRunner = runProcess,
-  manifestStore: { load?: () => Promise<DeploymentManifest | undefined>; save?: (manifest: DeploymentManifest) => Promise<void> } = {}): DemoDependencies => {
+  manifestStore: { load?: () => Promise<DeploymentManifest | undefined>; save?: (manifest: DeploymentManifest) => Promise<void>;
+    saveVerification?: (summary: Awaited<ReturnType<typeof verifyAws>>) => Promise<void> } = {}): DemoDependencies => {
   const config: DemoConfig = { ...input, qualifier: QUALIFIER, toolkitStack: TOOLKIT_STACK, appStack: APP_STACK, deliveryStack: DELIVERY_STACK, projectTag: PROJECT_TAG };
   const credentials = new RuntimeCredentialStore(resolve('.runtime/credentials'));
   let activeManifest: DeploymentManifest | undefined;
@@ -168,7 +170,12 @@ export const makeAwsDemoDependencies = (input: AwsDemoInput, clients = clientsFo
     verify: async (manifest) => {
       const frontendUrl = requiredManifestOutput(manifest, 'FrontendUrl');
       const fileEnvironment = await awsPlaywrightFileEnvironment(input, manifest, credentials);
-      await runner('pnpm', ['exec', 'playwright', 'test', '--project=aws'], { env: awsPlaywrightEnvironment(frontendUrl, fileEnvironment) });
+      const environment = awsPlaywrightEnvironment(frontendUrl, fileEnvironment, process.env, {
+        apiUrl: requiredManifestOutput(manifest, 'ApiUrl'), bucket: requiredManifestOutput(manifest, 'WebBucketName'), region: manifest.region,
+      });
+      const summary = await verifyAws(manifest, { environment, adapter: playwrightVerificationAdapter(environment, runner) });
+      await (manifestStore.saveVerification ?? ((value) => writePrivateJson(resolve('.runtime/verification.json'), value)))(summary);
+      if (summary.checks.some((check) => check.status === 'failed')) throw new Error('Deployed AWS verification failed.');
     },
   };
 
@@ -241,10 +248,31 @@ export const awsPlaywrightFileEnvironment = async (input: Pick<AwsDemoInput, 'ac
 };
 
 const PLAYWRIGHT_RUNTIME_ENVIRONMENT = ['PATH', 'HOME', 'TMPDIR', 'TMP', 'TEMP', 'LANG', 'LC_ALL', 'TZ', 'CI', 'NODE_ENV'] as const;
-export const awsPlaywrightEnvironment = (frontendUrl: string, fileEnvironment: Record<string, string>, environment = process.env): NodeJS.ProcessEnv => ({
-  ...Object.fromEntries(PLAYWRIGHT_RUNTIME_ENVIRONMENT.flatMap((name) => environment[name] === undefined ? [] : [[name, environment[name]!]])),
-  ...fileEnvironment, PORTAL_E2E_AWS: '1', PORTAL_E2E_AWS_URL: frontendUrl,
-});
+const PLAYWRIGHT_CREDENTIAL_FILES = ['PORTAL_E2E_PATIENT_A_FILE', 'PORTAL_E2E_PATIENT_B_FILE',
+  'PORTAL_E2E_CLINICIAN_A_FILE', 'PORTAL_E2E_CLINICIAN_B_FILE'] as const;
+export const awsPlaywrightEnvironment = (frontendUrl: string, fileEnvironment: Record<string, string>, environment = process.env,
+  deployed?: { apiUrl: string; bucket: string; region: string }): NodeJS.ProcessEnv => {
+  const keys = Object.keys(fileEnvironment).sort();
+  if (keys.length !== PLAYWRIGHT_CREDENTIAL_FILES.length || PLAYWRIGHT_CREDENTIAL_FILES.some((key) => !fileEnvironment[key]) ||
+      keys.some((key) => !(PLAYWRIGHT_CREDENTIAL_FILES as readonly string[]).includes(key))) {
+    throw new Error('AWS browser verification requires exactly four private credential files.');
+  }
+  const frontend = new URL(frontendUrl);
+  if (frontend.protocol !== 'https:' || frontend.origin !== frontend.href.replace(/\/$/, '') || frontend.username || frontend.password) {
+    throw new Error('AWS browser verification requires a deployed HTTPS frontend origin.');
+  }
+  if (deployed) {
+    const api = new URL(deployed.apiUrl);
+    if (api.protocol !== 'https:' || api.origin !== api.href.replace(/\/$/, '') || api.username || api.password ||
+        !/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(deployed.bucket) ||
+        !/^[a-z]{2}(?:-[a-z]+)+-[1-9]\d*$/.test(deployed.region)) throw new Error('AWS browser verification received invalid deployed coordinates.');
+  }
+  return {
+    ...Object.fromEntries(PLAYWRIGHT_RUNTIME_ENVIRONMENT.flatMap((name) => environment[name] === undefined ? [] : [[name, environment[name]!]])),
+    ...fileEnvironment, PORTAL_E2E_AWS: '1', PORTAL_E2E_AWS_URL: frontendUrl,
+    ...(deployed ? { PORTAL_E2E_AWS_API_URL: deployed.apiUrl, PORTAL_E2E_AWS_BUCKET: deployed.bucket, PORTAL_E2E_AWS_REGION: deployed.region } : {}),
+  };
+};
 
 const publishBuiltFrontend = async (manifest: DeploymentManifest, clients: AwsClients): Promise<void> => {
   const files = await readFrontendFiles(resolve('apps/web/dist'));

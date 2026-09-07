@@ -328,8 +328,9 @@ describe('disposable deployment lifecycle', () => {
       const calls: { args: readonly string[]; env?: NodeJS.ProcessEnv }[] = [];
       const runtime = makeAwsDemoDependencies({ account: manifest.account, region: manifest.region, postgresVersion: '17.6', durationHours: 1,
         maxCostUsd: 1, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), accountsFile, priceReport: accountsFile }, fakeAwsClients(),
-      async (_executable, args, options) => { calls.push({ args, env: options?.env }); return { stdout: '', stderr: '' }; });
-      await runtime.verify({ ...manifest, outputs: { ...manifest.outputs, UserPoolId: 'eu-north-1_fixture' } });
+      async (_executable, args, options) => { calls.push({ args, env: options?.env }); return { stdout: 'PORTAL_REQUEST_ID:request_fixture-123\n', stderr: '' }; },
+      { saveVerification: async () => {} });
+      await runtime.verify({ ...manifest, outputs: { ...manifest.outputs, UserPoolId: 'eu-north-1_fixture', ApiUrl: 'https://api.example.com', WebBucketName: 'fixture-bucket' } });
       const environment = calls[0]!.env!;
       const keys = ['PORTAL_E2E_PATIENT_A_FILE', 'PORTAL_E2E_PATIENT_B_FILE', 'PORTAL_E2E_CLINICIAN_A_FILE', 'PORTAL_E2E_CLINICIAN_B_FILE'];
       expect(keys.map((key) => environment[key])).toHaveLength(4);
@@ -359,15 +360,16 @@ describe('disposable deployment lifecycle', () => {
       const calls: { env?: NodeJS.ProcessEnv }[] = [];
       const runtime = makeAwsDemoDependencies({ account: manifest.account, region: manifest.region, postgresVersion: '17.6', durationHours: 1,
         maxCostUsd: 1, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), accountsFile, priceReport: accountsFile }, fakeAwsClients(),
-      async (_executable, _args, options) => { calls.push({ env: options?.env }); return { stdout: '', stderr: '' }; });
-      await runtime.verify({ ...manifest, outputs: { ...manifest.outputs, UserPoolId: 'eu-north-1_fixture' } });
+      async (_executable, _args, options) => { calls.push({ env: options?.env }); return { stdout: 'PORTAL_REQUEST_ID:request_fixture-123\n', stderr: '' }; },
+      { saveVerification: async () => {} });
+      await runtime.verify({ ...manifest, outputs: { ...manifest.outputs, UserPoolId: 'eu-north-1_fixture', ApiUrl: 'https://api.example.com', WebBucketName: 'fixture-bucket' } });
       const environment = calls[0]!.env!;
       const credentialKeys = ['PORTAL_E2E_PATIENT_A_FILE', 'PORTAL_E2E_PATIENT_B_FILE', 'PORTAL_E2E_CLINICIAN_A_FILE', 'PORTAL_E2E_CLINICIAN_B_FILE'];
       const allowed = new Set(['PATH', 'HOME', 'TMPDIR', 'TMP', 'TEMP', 'LANG', 'LC_ALL', 'TZ', 'CI', 'NODE_ENV', 'PORTAL_E2E_AWS',
-        'PORTAL_E2E_AWS_URL', 'PORTAL_E2E_PATIENT_A_FILE', 'PORTAL_E2E_PATIENT_B_FILE', 'PORTAL_E2E_CLINICIAN_A_FILE', 'PORTAL_E2E_CLINICIAN_B_FILE']);
+        'PORTAL_E2E_AWS_URL', 'PORTAL_E2E_AWS_API_URL', 'PORTAL_E2E_AWS_BUCKET', 'PORTAL_E2E_AWS_REGION', 'PORTAL_E2E_PATIENT_A_FILE', 'PORTAL_E2E_PATIENT_B_FILE', 'PORTAL_E2E_CLINICIAN_A_FILE', 'PORTAL_E2E_CLINICIAN_B_FILE']);
       expect(Object.keys(environment).every((name) => allowed.has(name))).toBe(true);
       expect(Object.keys(environment).filter((name) => name.startsWith('PORTAL_E2E_')).sort()).toEqual([
-        'PORTAL_E2E_AWS', 'PORTAL_E2E_AWS_URL', 'PORTAL_E2E_CLINICIAN_A_FILE', 'PORTAL_E2E_CLINICIAN_B_FILE',
+        'PORTAL_E2E_AWS', 'PORTAL_E2E_AWS_API_URL', 'PORTAL_E2E_AWS_BUCKET', 'PORTAL_E2E_AWS_REGION', 'PORTAL_E2E_AWS_URL', 'PORTAL_E2E_CLINICIAN_A_FILE', 'PORTAL_E2E_CLINICIAN_B_FILE',
         'PORTAL_E2E_PATIENT_A_FILE', 'PORTAL_E2E_PATIENT_B_FILE',
       ]);
       expect(JSON.stringify(environment)).not.toContain('sentinel');

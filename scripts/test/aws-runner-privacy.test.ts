@@ -25,7 +25,12 @@ describe('AWS privacy at public config evaluation', () => {
   });
   it('preserves normal option values and literal arguments after the CLI terminator', async () => {
     process.argv = ['node', 'playwright/cli.js', 'test', '--grep=--debug', '--', '--ui'];
-    expect((await evaluateConfig()).default.projects?.map((project) => project.name)).toEqual(['local-desktop', 'local-mobile', 'aws']);
+    const projects = (await evaluateConfig()).default.projects;
+    expect(projects?.map((project) => project.name)).toEqual(['local-desktop', 'local-mobile', 'aws', 'aws-mobile']);
+    expect(projects?.find((project) => project.name === 'aws-mobile')?.use).toMatchObject({
+      viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true,
+      trace: 'off', video: 'off', screenshot: 'off',
+    });
   });
   it('leaves local-only interactive runs available while AWS is disabled', async () => {
     vi.stubEnv('PORTAL_E2E_AWS', ''); process.argv = ['node', 'playwright/cli.js', 'test', '--ui'];

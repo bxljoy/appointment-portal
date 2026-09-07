@@ -1,25 +1,26 @@
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { DEPLOYMENT_PATH } from '../lifecycle-types.js';
 import { manifest } from './fakes.js';
 
 const processMock = vi.hoisted(() => vi.fn(async (...input: [string, readonly string[], { env?: NodeJS.ProcessEnv }?]) => {
   void input;
-  return { stdout: '', stderr: '' };
+  return { stdout: 'PORTAL_REQUEST_ID:request_fixture-123\n', stderr: '' };
 }));
 vi.mock('../preflight.js', () => ({ runProcess: processMock }));
 import { verifyDeployment } from '../verify-deployment.js';
 
-const configPath = resolve('.runtime/demo-config.json');
-const accountsPath = resolve('.runtime/verify-accounts.json');
-const prior = new Map<string, string | undefined>();
+let root: string;
+let configPath: string;
+let accountsPath: string;
+let deploymentPath: string;
+let verificationPath: string;
 
 beforeEach(async () => {
-  await mkdir(resolve('.runtime'), { recursive: true, mode: 0o700 });
-  for (const path of [DEPLOYMENT_PATH, configPath, accountsPath]) {
-    try { prior.set(path, await readFile(path, 'utf8')); } catch { prior.set(path, undefined); }
-  }
+  root = await mkdtemp(join(await realpath(tmpdir()), 'portal-verify-deployment-'));
+  configPath = join(root, 'demo-config.json'); accountsPath = join(root, 'accounts.json');
+  deploymentPath = join(root, 'deployment.json'); verificationPath = join(root, 'verification.json');
   const accounts = [
     { alias: 'patient-a', email: 'patient-a@example.com', displayName: 'Patient A', role: 'patient' },
     { alias: 'patient-b', email: 'patient-b@example.com', displayName: 'Patient B', role: 'patient' },
@@ -29,17 +30,12 @@ beforeEach(async () => {
   await writeFile(accountsPath, JSON.stringify(accounts), { mode: 0o600 });
   await writeFile(configPath, JSON.stringify({ account: manifest.account, region: manifest.region, postgresVersion: '17.6', durationHours: 1,
     maxCostUsd: 5, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), accountsFile: accountsPath, priceReport: accountsPath }), { mode: 0o600 });
-  await writeFile(DEPLOYMENT_PATH, JSON.stringify({ ...manifest, outputs: { ...manifest.outputs, UserPoolId: 'eu-north-1_fixture' } }), { mode: 0o600 });
+  await writeFile(deploymentPath, JSON.stringify({ ...manifest, outputs: { ...manifest.outputs, UserPoolId: 'eu-north-1_fixture',
+    ApiUrl: 'https://api.example.com', WebBucketName: 'fixture-bucket' } }), { mode: 0o600 });
   processMock.mockClear();
 });
 
-afterEach(async () => {
-  for (const [path, contents] of prior) {
-    if (contents === undefined) await rm(path, { force: true });
-    else await writeFile(path, contents, { mode: 0o600 });
-  }
-  prior.clear();
-});
+afterEach(async () => { await rm(root, { recursive: true, force: true }); });
 
 it('standalone verification maps all four aliases to deterministic private files without exposing credentials', async () => {
   const hostile = {
@@ -50,24 +46,29 @@ it('standalone verification maps all four aliases to deterministic private files
   };
   for (const [name, value] of Object.entries(hostile)) vi.stubEnv(name, value);
   try {
-    await verifyDeployment();
-    expect(processMock).toHaveBeenCalledTimes(1);
-    const [, args, options] = processMock.mock.calls[0]!;
-    expect(args).toEqual(['exec', 'playwright', 'test', '--project=aws']);
+    const summary = await verifyDeployment({ deployment: deploymentPath, config: configPath, verification: verificationPath });
+    expect(processMock).toHaveBeenCalledTimes(3);
+    expect(processMock.mock.calls.map(([, args]) => args)).toEqual([
+      ['exec', 'playwright', 'test', 'tests/e2e/aws-auth.spec.ts', '--project=aws', '--project=aws-mobile'],
+      ['exec', 'playwright', 'test', 'tests/e2e/aws-api.spec.ts', '--project=aws'],
+      ['exec', 'playwright', 'test', 'tests/e2e/aws-races.spec.ts', '--project=aws'],
+    ]);
+    const [, , options] = processMock.mock.calls[0]!;
     const env = options!.env!;
     const keys = ['PORTAL_E2E_PATIENT_A_FILE', 'PORTAL_E2E_PATIENT_B_FILE', 'PORTAL_E2E_CLINICIAN_A_FILE', 'PORTAL_E2E_CLINICIAN_B_FILE'];
     expect(keys.map((key) => env[key])).toHaveLength(4);
     expect(new Set(keys.map((key) => env[key])).size).toBe(4);
     for (const key of keys) expect(env[key]).toMatch(/\.runtime\/credentials\/[a-zA-Z0-9_-]+-[a-f0-9]{64}\.json$/);
     const allowed = new Set(['PATH', 'HOME', 'TMPDIR', 'TMP', 'TEMP', 'LANG', 'LC_ALL', 'TZ', 'CI', 'NODE_ENV', 'PORTAL_E2E_AWS',
-      'PORTAL_E2E_AWS_URL', ...keys]);
+      'PORTAL_E2E_AWS_URL', 'PORTAL_E2E_AWS_API_URL', 'PORTAL_E2E_AWS_BUCKET', 'PORTAL_E2E_AWS_REGION', ...keys]);
     expect(Object.keys(env).every((name) => allowed.has(name))).toBe(true);
     expect(JSON.stringify(processMock.mock.calls)).not.toMatch(/password|patient-a@example\.com|sentinel/i);
+    expect(JSON.parse(await readFile(verificationPath, 'utf8'))).toEqual(summary);
   } finally { vi.unstubAllEnvs(); }
 });
 
 it('refuses an output-empty recovery manifest before starting standalone verification', async () => {
-  await writeFile(DEPLOYMENT_PATH, JSON.stringify({ ...manifest, phase: 'bootstrap', outputs: {}, resources: [] }), { mode: 0o600 });
-  await expect(verifyDeployment()).rejects.toThrow(/ready deployment manifest/i);
+  await writeFile(deploymentPath, JSON.stringify({ ...manifest, phase: 'bootstrap', outputs: {}, resources: [] }), { mode: 0o600 });
+  await expect(verifyDeployment({ deployment: deploymentPath, config: configPath, verification: verificationPath })).rejects.toThrow(/ready deployment manifest/i);
   expect(processMock).not.toHaveBeenCalled();
 });

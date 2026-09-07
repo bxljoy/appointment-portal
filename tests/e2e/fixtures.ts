@@ -7,14 +7,15 @@ import { assertAwsArtifactPrivacy } from './aws-artifact-privacy.js';
 import { readPrivateFile } from '../../scripts/private-file.js';
 
 type Portal = Awaited<ReturnType<typeof startLocalPortal>>;
+const isAwsProject = (name: string) => name === 'aws' || name === 'aws-mobile';
 export const test = base.extend<{ scenario: Portal; artifactPrivacy: void }, { portal: Portal | undefined }>({
   artifactPrivacy: [async ({ trace, video, screenshot, storageState, contextOptions }, use, info) => {
-    if (info.project.name === 'aws') assertAwsArtifactPrivacy(info.config.reporter, { trace, video, screenshot, storageState, contextOptions });
+    if (isAwsProject(info.project.name)) assertAwsArtifactPrivacy(info.config.reporter, { trace, video, screenshot, storageState, contextOptions });
     await use();
   }, { auto: true }],
   portal: [async ({ browserName }, use, info) => {
     if (browserName !== 'chromium') throw new Error('Portal browser fixtures require Chromium.');
-    if (info.project.name === 'aws') { await use(undefined); return; }
+    if (isAwsProject(info.project.name)) { await use(undefined); return; }
     const portal = await startLocalPortal();
     try { await use(portal); } finally { await portal.close(); }
   }, { scope: 'worker' }],
@@ -43,7 +44,7 @@ export async function awsCredential(account: Account) {
 
 export async function signIn(page: Page, account: Account) {
   if (!(accounts as readonly string[]).includes(account)) throw new Error('Unknown E2E account.');
-  if (test.info().project.name !== 'aws') {
+  if (!isAwsProject(test.info().project.name)) {
     await page.getByLabel('Development identity', { exact: true }).selectOption(account);
     await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   } else {

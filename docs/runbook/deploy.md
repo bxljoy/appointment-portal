@@ -4,6 +4,41 @@ This runbook is for one short verification window. Task 16 supplies and tests th
 tooling; do not run it until Task 17 selects the AWS account, repository, controlled
 addresses, branch, and cost ceiling.
 
+## Deployed verification
+
+`pnpm demo:verify` reads only the checked private manifest/config/account files and
+runs the three opt-in AWS files in order: managed authentication at desktop and mobile
+sizes, API/edge controls,
+and booking races. The child environment contains only basic runtime variables,
+four private credential-file paths, the CloudFront/API/S3 coordinates, and the AWS
+opt-in marker. It does not inherit AWS credentials, GitHub tokens, controlled email
+values, passwords, or unrelated `PORTAL_E2E_*` variables.
+
+```sh
+pnpm demo:verify
+pnpm demo:measure -- "https://DEPLOYED-CLOUDFRONT/" public
+```
+
+Verification writes sanitized status and request IDs to
+`.runtime/verification.json`; performance writes three mobile runs to
+`.runtime/performance.json`. Both remain ignored private working files until a person
+reviews and copies the safe fields into `docs/evidence/`. AWS Playwright permits only
+the list reporter and disables traces, video, screenshots, saved storage, HARs,
+failure-page snapshots, debug protocol logs, UI mode, and injected reporters before
+credential entry. Access and ID tokens live only in worker memory.
+
+The public performance command uses the exact pinned Lighthouse version. Authenticated
+appointment-route measurement must call `measureWeb` with a user-flow adapter that
+maintains or explicitly reacquires the in-memory Cognito session. The navigation CLI
+refuses authenticated mode so it cannot silently score the sign-in page. Run three
+repeats, investigate a median below 90, and describe results as Lighthouse lab data.
+
+The access-token-expiry case intentionally waits until the deployed five-minute token
+expires. Keep this separate from the controlled throttling check, and do not increase
+request volume while diagnosing an unrelated failure. Manual self-registration,
+email verification, initial patient role, sign-out/sign-in, and password recovery
+remain a person-observed check and must never be inferred from provisioned users.
+
 ## Private runtime inputs
 
 Create `.runtime/demo-config.json`, `.runtime/accounts.json`, and
