@@ -7,7 +7,8 @@ import type { ProcessRunner } from '../preflight.js';
 
 const ready = { ...manifest, phase: 'ready' as const, sourceCommit: 'b'.repeat(40) };
 const now = () => new Date('2026-09-07T10:00:00Z');
-const manualRegistration = confirmManualRegistration(ready, { signupAlias: 'signup-check', confirmed: true }, now);
+const manualAnswers = ['signup-check', ...Array(6).fill('yes')];
+const manualRegistration = await confirmManualRegistration(ready, { ask: async () => manualAnswers.shift()! }, now);
 const correlation = { observe: async () => ({ requestCount: 2, coldCount: 1, warmCount: 1, maxDurationMs: 23 }) };
 
 it('records only fixed scenario text and allowlisted request IDs', async () => {
@@ -74,7 +75,20 @@ it('rejects extra runner variables and invalid deployed coordinates before launc
     PORTAL_E2E_CLINICIAN_A_FILE: '/private/c', PORTAL_E2E_CLINICIAN_B_FILE: '/private/d' };
   expect(() => awsPlaywrightEnvironment('https://portal.example', { ...files, DEBUG: 'pw:protocol' })).toThrow(/exactly four/i);
   expect(() => awsPlaywrightEnvironment('https://portal.example/path', files)).toThrow(/origin/i);
-  expect(() => awsPlaywrightEnvironment('https://portal.example', files, {}, { apiUrl: 'http://api.example', bucket: 'bucket', region: 'eu-north-1' })).toThrow(/coordinates/i);
+  expect(() => awsPlaywrightEnvironment('https://portal.example', files, {}, { apiUrl: 'http://api.example', bucket: 'bucket', region: 'eu-north-1',
+    account: ready.account, issuer: ready.outputs.Issuer!, clientId: ready.outputs.ClientId!, userPoolId: ready.outputs.UserPoolId!, cognitoDomain: ready.outputs.CognitoDomain! })).toThrow(/coordinates/i);
+});
+
+it('passes exact non-secret Cognito authority while scrubbing inherited provider secrets', () => {
+  const files = { PORTAL_E2E_PATIENT_A_FILE: '/private/a', PORTAL_E2E_PATIENT_B_FILE: '/private/b',
+    PORTAL_E2E_CLINICIAN_A_FILE: '/private/c', PORTAL_E2E_CLINICIAN_B_FILE: '/private/d' };
+  const environment = awsPlaywrightEnvironment('https://portal.example', files, { AWS_SECRET_ACCESS_KEY: 'secret', GITHUB_TOKEN: 'token', PATH: '/bin' }, {
+    apiUrl: 'https://api.example', bucket: 'fixture-bucket', region: ready.region, account: ready.account, issuer: ready.outputs.Issuer!,
+    clientId: ready.outputs.ClientId!, userPoolId: ready.outputs.UserPoolId!, cognitoDomain: ready.outputs.CognitoDomain! });
+  expect(environment).toMatchObject({ PORTAL_E2E_AWS_ACCOUNT: ready.account, PORTAL_E2E_AWS_REGION: ready.region,
+    PORTAL_E2E_AWS_ISSUER: ready.outputs.Issuer, PORTAL_E2E_AWS_CLIENT_ID: ready.outputs.ClientId,
+    PORTAL_E2E_AWS_USER_POOL_ID: ready.outputs.UserPoolId, PORTAL_E2E_AWS_COGNITO_DOMAIN: ready.outputs.CognitoDomain });
+  expect(environment).not.toHaveProperty('AWS_SECRET_ACCESS_KEY'); expect(environment).not.toHaveProperty('GITHUB_TOKEN');
 });
 
 it('runs managed browser behavior at desktop and mobile sizes while keeping API and race traffic single-pass', async () => {

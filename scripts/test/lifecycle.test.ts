@@ -261,6 +261,7 @@ describe('disposable deployment lifecycle', () => {
 
   it('uploads immutable hashed assets before no-cache config and shell, then waits for invalidation', async () => {
     const events: string[] = [];
+    let publishedConfig: unknown;
     await publishFrontend({
       frontendUrl: 'https://demo.cloudfront.net',
       callbackUrl: 'https://demo.cloudfront.net/auth/callback',
@@ -273,7 +274,8 @@ describe('disposable deployment lifecycle', () => {
         { key: 'assets/app-a1b2.js', body: new Uint8Array([1]), contentType: 'text/javascript' },
       ],
     }, {
-      upload: async (entry) => { events.push(`upload:${entry.key}:${entry.cacheControl}`); },
+      upload: async (entry) => { events.push(`upload:${entry.key}:${entry.cacheControl}`);
+        if (entry.key === 'config.json') publishedConfig = JSON.parse(new TextDecoder().decode(entry.body)); },
       invalidate: async (paths) => { events.push(`invalidate:${paths.join(',')}`); return 'inv-1'; },
       waitInvalidation: async (id) => { events.push(`wait:${id}`); },
     });
@@ -283,6 +285,7 @@ describe('disposable deployment lifecycle', () => {
       'upload:index.html:no-cache, max-age=0, must-revalidate',
       'invalidate:/,/index.html,/config.json', 'wait:inv-1',
     ]);
+    expect(publishedConfig).toMatchObject({ redirectUri: 'https://demo.cloudfront.net/auth/callback', logoutUri: 'https://demo.cloudfront.net/signed-out' });
   });
 
   it('checks every estimated charge against the user supplied execution cap', () => {
@@ -368,10 +371,13 @@ describe('disposable deployment lifecycle', () => {
       const environment = calls[0]!.env!;
       const credentialKeys = ['PORTAL_E2E_PATIENT_A_FILE', 'PORTAL_E2E_PATIENT_B_FILE', 'PORTAL_E2E_CLINICIAN_A_FILE', 'PORTAL_E2E_CLINICIAN_B_FILE'];
       const allowed = new Set(['PATH', 'HOME', 'TMPDIR', 'TMP', 'TEMP', 'LANG', 'LC_ALL', 'TZ', 'CI', 'NODE_ENV', 'PORTAL_E2E_AWS',
-        'PORTAL_E2E_AWS_URL', 'PORTAL_E2E_AWS_API_URL', 'PORTAL_E2E_AWS_BUCKET', 'PORTAL_E2E_AWS_REGION', 'PORTAL_E2E_PATIENT_A_FILE', 'PORTAL_E2E_PATIENT_B_FILE', 'PORTAL_E2E_CLINICIAN_A_FILE', 'PORTAL_E2E_CLINICIAN_B_FILE']);
+        'PORTAL_E2E_AWS_URL', 'PORTAL_E2E_AWS_API_URL', 'PORTAL_E2E_AWS_BUCKET', 'PORTAL_E2E_AWS_REGION', 'PORTAL_E2E_AWS_ACCOUNT',
+        'PORTAL_E2E_AWS_ISSUER', 'PORTAL_E2E_AWS_CLIENT_ID', 'PORTAL_E2E_AWS_USER_POOL_ID', 'PORTAL_E2E_AWS_COGNITO_DOMAIN',
+        'PORTAL_E2E_PATIENT_A_FILE', 'PORTAL_E2E_PATIENT_B_FILE', 'PORTAL_E2E_CLINICIAN_A_FILE', 'PORTAL_E2E_CLINICIAN_B_FILE']);
       expect(Object.keys(environment).every((name) => allowed.has(name))).toBe(true);
       expect(Object.keys(environment).filter((name) => name.startsWith('PORTAL_E2E_')).sort()).toEqual([
-        'PORTAL_E2E_AWS', 'PORTAL_E2E_AWS_API_URL', 'PORTAL_E2E_AWS_BUCKET', 'PORTAL_E2E_AWS_REGION', 'PORTAL_E2E_AWS_URL', 'PORTAL_E2E_CLINICIAN_A_FILE', 'PORTAL_E2E_CLINICIAN_B_FILE',
+        'PORTAL_E2E_AWS', 'PORTAL_E2E_AWS_ACCOUNT', 'PORTAL_E2E_AWS_API_URL', 'PORTAL_E2E_AWS_BUCKET', 'PORTAL_E2E_AWS_CLIENT_ID',
+        'PORTAL_E2E_AWS_COGNITO_DOMAIN', 'PORTAL_E2E_AWS_ISSUER', 'PORTAL_E2E_AWS_REGION', 'PORTAL_E2E_AWS_URL', 'PORTAL_E2E_AWS_USER_POOL_ID', 'PORTAL_E2E_CLINICIAN_A_FILE', 'PORTAL_E2E_CLINICIAN_B_FILE',
         'PORTAL_E2E_PATIENT_A_FILE', 'PORTAL_E2E_PATIENT_B_FILE',
       ]);
       expect(JSON.stringify(environment)).not.toContain('sentinel');

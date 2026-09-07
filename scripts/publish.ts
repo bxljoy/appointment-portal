@@ -31,7 +31,8 @@ export const publishFrontend = async (input: PublishInput, adapter: PublishAdapt
   if (origin.origin !== input.frontendUrl || origin.protocol !== 'https:') throw new Error('Invalid CloudFront frontend origin.');
   if (input.callbackUrl !== `${input.frontendUrl}/auth/callback`) throw new Error('Deployed Cognito callback does not match the CloudFront origin.');
   const config = publicConfigSchema.parse(input.publicConfig);
-  const configBody = new TextEncoder().encode(`${JSON.stringify(config)}\n`);
+  const configBody = new TextEncoder().encode(`${JSON.stringify({ ...config, redirectUri: input.callbackUrl,
+    logoutUri: `${input.frontendUrl}/signed-out` })}\n`);
   const assets = input.files.filter((file) => file.key.startsWith('assets/'));
   if (assets.some((file) => !hashedAsset.test(file.key))) throw new Error('Frontend assets must use content-hashed names.');
   for (const asset of assets) await adapter.upload({ ...asset, cacheControl: immutable });

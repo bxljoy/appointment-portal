@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { chromium } from '@playwright/test';
 import { expect, it, vi } from 'vitest';
-import { acquireTokensWithConfig, completeManagedLogin, validateAwsRuntimeConfig } from '../../tests/e2e/aws-support.js';
+import { acquireTokensWithConfig, completeManagedLogin, credentialAfterAuthority, validateAwsRuntimeConfig } from '../../tests/e2e/aws-support.js';
 
 const origin = 'https://portal.example';
 const config = {
@@ -11,15 +11,26 @@ const config = {
   clientId: 'public-client', cognitoDomain: 'https://portal.auth.eu-north-1.amazoncognito.com',
   redirectUri: `${origin}/auth/callback`, logoutUri: `${origin}/signed-out`,
 } as const;
+const authority = { account: '111111111111', region: 'eu-north-1', issuer: config.issuer, clientId: config.clientId,
+  userPoolId: 'eu-north-1_fixture', cognitoDomain: config.cognitoDomain, frontendUrl: origin };
 
 it('accepts only the deployed same-origin callbacks and matching AWS Cognito region', () => {
-  expect(validateAwsRuntimeConfig(config, origin)).toEqual(config);
+  expect(validateAwsRuntimeConfig(config, authority)).toEqual(config);
   for (const patch of [
     { cognitoDomain: 'https://login.example.invalid' },
     { cognitoDomain: 'https://portal.auth.us-east-1.amazoncognito.com' },
     { issuer: 'https://issuer.example.invalid/pool' },
     { redirectUri: 'https://other.example/auth/callback' },
-  ]) expect(() => validateAwsRuntimeConfig({ ...config, ...patch }, origin)).toThrow(/configuration/i);
+    { clientId: 'stale-client' }, { issuer: 'https://cognito-idp.eu-north-1.amazonaws.com/eu-north-1_other' },
+  ]) expect(() => validateAwsRuntimeConfig({ ...config, ...patch }, authority)).toThrow(/configuration|authority/i);
+});
+
+it('rejects a redirect off the exact managed-login origin before the credential reader runs', async () => {
+  const read = vi.fn(async () => ({ password: 'sentinel' }));
+  await expect(credentialAfterAuthority('https://evil.auth.eu-north-1.amazoncognito.com/login', authority, read)).rejects.toThrow(/authority/i);
+  expect(read).not.toHaveBeenCalled();
+  await expect(credentialAfterAuthority(`${authority.cognitoDomain}/login`, authority, read)).resolves.toEqual({ password: 'sentinel' });
+  expect(read).toHaveBeenCalledTimes(1);
 });
 
 it('handles both a visible Cognito form and an immediate managed-login SSO callback', async () => {

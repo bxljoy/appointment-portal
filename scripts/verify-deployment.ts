@@ -26,7 +26,9 @@ export const verifyDeployment = async (paths: { deployment?: string; config?: st
     ['profiles', 'availability', 'appointments'].map((name) => `/appointment-portal/${manifest.appStack}/api/${name}`));
   const manualRegistration = await loadManualRegistration(paths.manualRegistration);
   const summary = await verifyAws(manifest, { environment: awsPlaywrightEnvironment(frontendUrl, fileEnvironment, process.env,
-    { apiUrl, bucket, region: manifest.region }), correlation, manualRegistration, now: dependencies.now });
+    { apiUrl, bucket, region: manifest.region, account: manifest.account, issuer: manifest.outputs.Issuer ?? '',
+      clientId: manifest.outputs.ClientId ?? '', userPoolId: manifest.outputs.UserPoolId ?? '', cognitoDomain: manifest.outputs.CognitoDomain ?? '' }),
+    correlation, manualRegistration, now: dependencies.now });
   await writePrivateJson(paths.verification ?? resolve('.runtime/verification.json'), summary);
   if (summary.checks.some((check) => check.status === 'failed')) throw new Error('Deployed AWS verification failed.');
   return summary;

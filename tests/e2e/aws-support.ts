@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { awsCredential } from './fixtures.js';
 import type { Account } from './local-auth.setup.js';
 import { isAwsRequestId } from '../../scripts/aws-request-id.js';
+import { assertManagedLoginOrigin, validatePublicCognitoConfig, type AwsAuthority } from '../../scripts/aws-authority.js';
 
 const configSchema = z.strictObject({
   mode: z.literal('cognito'), apiBaseUrl: z.literal('/api'), issuer: z.url().startsWith('https://'),
@@ -16,31 +17,35 @@ const tokenSchema = z.object({ access_token: z.string().min(100), id_token: z.st
 export type AwsTokens = z.infer<typeof tokenSchema>;
 export type AwsRuntimeConfig = z.infer<typeof configSchema>;
 
-export function validateAwsRuntimeConfig(raw: unknown, origin: string): AwsRuntimeConfig {
+export function validateAwsRuntimeConfig(raw: unknown, expected: AwsAuthority): AwsRuntimeConfig {
   const config = configSchema.parse(raw);
-  for (const [value, path] of [[config.redirectUri, '/auth/callback'], [config.logoutUri, '/signed-out']] as const) {
-    const url = new URL(value);
-    if (url.origin !== origin || url.pathname !== path || url.search || url.hash || url.username || url.password) {
-      throw new Error('Deployed Cognito configuration has invalid callback URLs.');
-    }
-  }
-  const issuer = /^https:\/\/cognito-idp\.([a-z0-9-]+)\.amazonaws\.com\/[A-Za-z0-9_-]+$/.exec(config.issuer);
-  const domain = /^https:\/\/[a-z0-9-]+\.auth\.([a-z0-9-]+)\.amazoncognito\.com$/.exec(config.cognitoDomain);
-  if (!issuer || !domain || issuer[1] !== domain[1]) throw new Error('Deployed Cognito configuration is invalid.');
-  return config;
+  return validatePublicCognitoConfig(config, expected);
 }
+
+const expectedAuthority = (): AwsAuthority => ({
+  account: process.env.PORTAL_E2E_AWS_ACCOUNT ?? '', region: process.env.PORTAL_E2E_AWS_REGION ?? '',
+  issuer: process.env.PORTAL_E2E_AWS_ISSUER ?? '', clientId: process.env.PORTAL_E2E_AWS_CLIENT_ID ?? '',
+  userPoolId: process.env.PORTAL_E2E_AWS_USER_POOL_ID ?? '', cognitoDomain: process.env.PORTAL_E2E_AWS_COGNITO_DOMAIN ?? '',
+  frontendUrl: process.env.PORTAL_E2E_AWS_URL ?? '',
+});
 
 export async function awsRuntimeConfig(page: Page): Promise<AwsRuntimeConfig> {
   const response = await page.request.get(new URL('/config.json', page.url()).href);
   if (!response.ok()) throw new Error('Deployed public configuration is unavailable.');
-  return validateAwsRuntimeConfig(await response.json(), new URL(page.url()).origin);
+  return validateAwsRuntimeConfig(await response.json(), expectedAuthority());
 }
 
-async function submitManagedLogin(page: Page, account: Account, expectedOrigin: string): Promise<void> {
-  const credential = await awsCredential(account);
+export async function credentialAfterAuthority<T>(currentUrl: string, authority: AwsAuthority, read: () => Promise<T>): Promise<T> {
+  assertManagedLoginOrigin(currentUrl, authority);
+  return read();
+}
+
+async function submitManagedLogin(page: Page, account: Account, authority: AwsAuthority): Promise<void> {
   try {
-    if (new URL(page.url()).origin !== expectedOrigin) throw new Error();
+    const credential = await credentialAfterAuthority(page.url(), authority, () => awsCredential(account));
+    assertManagedLoginOrigin(page.url(), authority);
     await page.getByLabel('Email', { exact: true }).fill(credential.email);
+    assertManagedLoginOrigin(page.url(), authority);
     await page.getByLabel('Password', { exact: true }).fill(credential.password);
     await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   } catch {
@@ -67,6 +72,7 @@ const credentialFormVisible = async (page: Page) => {
 
 export async function signInThroughApplication(page: Page, account: Account): Promise<{ tokens: AwsTokens; authorizationUrl: URL }> {
   const config = await awsRuntimeConfig(page);
+  const authority = expectedAuthority();
   const tokenResponse = page.waitForResponse((response) => response.request().method() === 'POST' &&
     response.url() === new URL('/oauth2/token', config.cognitoDomain).href);
   const authorizationRequest = page.waitForRequest((request) => request.method() === 'GET' &&
@@ -74,7 +80,7 @@ export async function signInThroughApplication(page: Page, account: Account): Pr
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   const authorizationUrl = new URL((await authorizationRequest).url());
   const response = await completeManagedLogin({ callback: tokenResponse, waitForCredentialForm: () => credentialFormVisible(page),
-    submitCredentials: () => submitManagedLogin(page, account, new URL(config.cognitoDomain).origin) });
+    submitCredentials: () => submitManagedLogin(page, account, authority) });
   if (!response.ok()) throw new Error('Managed token exchange failed.');
   const tokens = tokenSchema.parse(await response.json());
   await page.waitForURL((url) => url.origin === new URL(config.redirectUri).origin);
@@ -84,7 +90,7 @@ export async function signInThroughApplication(page: Page, account: Account): Pr
 export async function acquireTokens(page: Page, account: Account, scope = 'openid profile portal/access'): Promise<AwsTokens> {
   const config = await awsRuntimeConfig(page);
   return acquireTokensWithConfig(page, config, scope,
-    () => submitManagedLogin(page, account, new URL(config.cognitoDomain).origin));
+    () => submitManagedLogin(page, account, expectedAuthority()));
 }
 
 export async function acquireTokensWithConfig(page: Page, config: AwsRuntimeConfig, scope: string,

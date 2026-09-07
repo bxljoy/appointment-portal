@@ -35,8 +35,10 @@ beforeEach(async () => {
     maxCostUsd: 5, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), accountsFile: accountsPath, priceReport: accountsPath }), { mode: 0o600 });
   await writeFile(deploymentPath, JSON.stringify({ ...manifest, outputs: { ...manifest.outputs, UserPoolId: 'eu-north-1_fixture',
     ApiUrl: 'https://api.example.com', WebBucketName: 'fixture-bucket' } }), { mode: 0o600 });
-  await writeFile(manualRegistrationPath, JSON.stringify({ commit: manifest.sourceCommit, checkedAt: new Date().toISOString(),
-    signupAlias: 'signup-check', status: 'manual-passed' }), { mode: 0o600 });
+  const checkedAt = new Date();
+  await writeFile(manualRegistrationPath, JSON.stringify({ account: manifest.account, region: manifest.region, commit: manifest.sourceCommit,
+    frontendUrl: manifest.outputs.FrontendUrl, distributionId: manifest.outputs.DistributionId, checkedAt: checkedAt.toISOString(),
+    expiresAt: new Date(checkedAt.getTime() + 6 * 60 * 60_000).toISOString(), signupAlias: 'signup-check', status: 'manual-passed' }), { mode: 0o600 });
   processMock.mockClear();
 });
 
@@ -65,7 +67,8 @@ it('standalone verification maps all four aliases to deterministic private files
     expect(new Set(keys.map((key) => env[key])).size).toBe(4);
     for (const key of keys) expect(env[key]).toMatch(/\.runtime\/credentials\/[a-zA-Z0-9_-]+-[a-f0-9]{64}\.json$/);
     const allowed = new Set(['PATH', 'HOME', 'TMPDIR', 'TMP', 'TEMP', 'LANG', 'LC_ALL', 'TZ', 'CI', 'NODE_ENV', 'PORTAL_E2E_AWS',
-      'PORTAL_E2E_AWS_URL', 'PORTAL_E2E_AWS_API_URL', 'PORTAL_E2E_AWS_BUCKET', 'PORTAL_E2E_AWS_REGION', ...keys]);
+      'PORTAL_E2E_AWS_URL', 'PORTAL_E2E_AWS_API_URL', 'PORTAL_E2E_AWS_BUCKET', 'PORTAL_E2E_AWS_REGION', 'PORTAL_E2E_AWS_ACCOUNT',
+      'PORTAL_E2E_AWS_ISSUER', 'PORTAL_E2E_AWS_CLIENT_ID', 'PORTAL_E2E_AWS_USER_POOL_ID', 'PORTAL_E2E_AWS_COGNITO_DOMAIN', ...keys]);
     expect(Object.keys(env).every((name) => allowed.has(name))).toBe(true);
     expect(JSON.stringify(processMock.mock.calls)).not.toMatch(/password|patient-a@example\.com|sentinel/i);
     expect(JSON.parse(await readFile(verificationPath, 'utf8'))).toEqual(summary);

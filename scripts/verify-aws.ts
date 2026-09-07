@@ -19,7 +19,7 @@ const suites = [
   { id: 'aws-api', name: 'deployed API and edge controls', label: 'AWS API suite' },
   { id: 'aws-races', name: 'deployed booking races', label: 'AWS race suite' },
 ] as const;
-export type CorrelationAdapter = { observe(requestIds: string[]): Promise<CorrelationSummary> };
+export type CorrelationAdapter = { observe(requestIds: string[], window: { startTime: number; endTime: number }): Promise<CorrelationSummary> };
 
 export function playwrightVerificationAdapter(environment: NodeJS.ProcessEnv, runner: ProcessRunner = runProcess): VerificationAdapter {
   return {
@@ -41,7 +41,8 @@ export async function verifyAws(manifest: DeploymentManifest, options: {
   if (!adapter) throw new Error('A sanitized AWS verification environment is required.');
   const checks: VerificationSummary['checks'] = [];
   const correlatedIds: string[] = [];
-  const checkedAt = (options.now ?? (() => new Date()))();
+  const clock = options.now ?? (() => new Date());
+  const startedAt = clock();
   for (const suite of suites) {
     try {
       const observation = await adapter.run(suite.id);
@@ -59,7 +60,10 @@ export async function verifyAws(manifest: DeploymentManifest, options: {
   }
   try {
     if (!options.correlation) throw new Error();
-    const result = await options.correlation.observe([...new Set(correlatedIds)].sort());
+    const finishedAt = clock();
+    const result = await options.correlation.observe([...new Set(correlatedIds)].sort(), {
+      startTime: startedAt.getTime() - 60_000, endTime: finishedAt.getTime() + 60_000,
+    });
     if (result.requestCount !== new Set(correlatedIds).size || result.coldCount + result.warmCount !== result.requestCount ||
         !Number.isInteger(result.maxDurationMs) || result.maxDurationMs < 0) throw new Error();
     checks.push({ name: 'request-correlated CloudWatch observations', status: 'passed',
@@ -67,6 +71,7 @@ export async function verifyAws(manifest: DeploymentManifest, options: {
   } catch {
     checks.push({ name: 'request-correlated CloudWatch observations', status: 'failed', detail: 'Request-correlated CloudWatch observations are incomplete.' });
   }
+  const checkedAt = clock();
   checks.push(manualRegistrationCheck(manifest, options.manualRegistration, checkedAt));
   return { commit: manifest.sourceCommit, checkedAt: checkedAt.toISOString(), checks };
 }

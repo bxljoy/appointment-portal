@@ -175,6 +175,8 @@ export const makeAwsDemoDependencies = (input: AwsDemoInput, clients = clientsFo
       const fileEnvironment = await awsPlaywrightFileEnvironment(input, manifest, credentials);
       const environment = awsPlaywrightEnvironment(frontendUrl, fileEnvironment, process.env, {
         apiUrl: requiredManifestOutput(manifest, 'ApiUrl'), bucket: requiredManifestOutput(manifest, 'WebBucketName'), region: manifest.region,
+        account: manifest.account, issuer: requiredManifestOutput(manifest, 'Issuer'), clientId: requiredManifestOutput(manifest, 'ClientId'),
+        userPoolId: requiredManifestOutput(manifest, 'UserPoolId'), cognitoDomain: requiredManifestOutput(manifest, 'CognitoDomain'),
       });
       const correlation = manifestStore.correlation ?? cloudWatchCorrelationAdapter(clients.logs,
         ['profiles', 'availability', 'appointments'].map((name) => `/appointment-portal/${APP_STACK}/api/${name}`));
@@ -259,7 +261,7 @@ const PLAYWRIGHT_RUNTIME_ENVIRONMENT = ['PATH', 'HOME', 'TMPDIR', 'TMP', 'TEMP',
 const PLAYWRIGHT_CREDENTIAL_FILES = ['PORTAL_E2E_PATIENT_A_FILE', 'PORTAL_E2E_PATIENT_B_FILE',
   'PORTAL_E2E_CLINICIAN_A_FILE', 'PORTAL_E2E_CLINICIAN_B_FILE'] as const;
 export const awsPlaywrightEnvironment = (frontendUrl: string, fileEnvironment: Record<string, string>, environment = process.env,
-  deployed?: { apiUrl: string; bucket: string; region: string }): NodeJS.ProcessEnv => {
+  deployed?: { apiUrl: string; bucket: string; region: string; account: string; issuer: string; clientId: string; userPoolId: string; cognitoDomain: string }): NodeJS.ProcessEnv => {
   const keys = Object.keys(fileEnvironment).sort();
   if (keys.length !== PLAYWRIGHT_CREDENTIAL_FILES.length || PLAYWRIGHT_CREDENTIAL_FILES.some((key) => !fileEnvironment[key]) ||
       keys.some((key) => !(PLAYWRIGHT_CREDENTIAL_FILES as readonly string[]).includes(key))) {
@@ -273,12 +275,18 @@ export const awsPlaywrightEnvironment = (frontendUrl: string, fileEnvironment: R
     const api = new URL(deployed.apiUrl);
     if (api.protocol !== 'https:' || api.origin !== api.href.replace(/\/$/, '') || api.username || api.password ||
         !/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(deployed.bucket) ||
-        !/^[a-z]{2}(?:-[a-z]+)+-[1-9]\d*$/.test(deployed.region)) throw new Error('AWS browser verification received invalid deployed coordinates.');
+        !/^[a-z]{2}(?:-[a-z]+)+-[1-9]\d*$/.test(deployed.region) || !/^\d{12}$/.test(deployed.account) || !deployed.clientId ||
+        deployed.issuer !== `https://cognito-idp.${deployed.region}.amazonaws.com/${deployed.userPoolId}` ||
+        !new RegExp(`^https://[a-z0-9-]+\\.auth\\.${deployed.region.replaceAll('-', '\\-')}\\.amazoncognito\\.com$`).test(deployed.cognitoDomain)) {
+      throw new Error('AWS browser verification received invalid deployed coordinates.');
+    }
   }
   return {
     ...Object.fromEntries(PLAYWRIGHT_RUNTIME_ENVIRONMENT.flatMap((name) => environment[name] === undefined ? [] : [[name, environment[name]!]])),
     ...fileEnvironment, PORTAL_E2E_AWS: '1', PORTAL_E2E_AWS_URL: frontendUrl,
-    ...(deployed ? { PORTAL_E2E_AWS_API_URL: deployed.apiUrl, PORTAL_E2E_AWS_BUCKET: deployed.bucket, PORTAL_E2E_AWS_REGION: deployed.region } : {}),
+    ...(deployed ? { PORTAL_E2E_AWS_API_URL: deployed.apiUrl, PORTAL_E2E_AWS_BUCKET: deployed.bucket, PORTAL_E2E_AWS_REGION: deployed.region,
+      PORTAL_E2E_AWS_ACCOUNT: deployed.account, PORTAL_E2E_AWS_ISSUER: deployed.issuer, PORTAL_E2E_AWS_CLIENT_ID: deployed.clientId,
+      PORTAL_E2E_AWS_USER_POOL_ID: deployed.userPoolId, PORTAL_E2E_AWS_COGNITO_DOMAIN: deployed.cognitoDomain } : {}),
   };
 };
 

@@ -16,7 +16,9 @@ export const manifest: DeploymentManifest = {
   qualifier: 'apptdemo',
   sourceCommit: 'a'.repeat(40),
   phase: 'ready',
-  outputs: { FrontendUrl: 'https://demo.cloudfront.net' },
+  outputs: { FrontendUrl: 'https://demo.cloudfront.net', DistributionId: 'EDISTFIXTURE',
+    Issuer: 'https://cognito-idp.eu-north-1.amazonaws.com/eu-north-1_fixture', UserPoolId: 'eu-north-1_fixture',
+    ClientId: 'fixtureclient', CognitoDomain: 'https://appointment-portal.auth.eu-north-1.amazoncognito.com' },
   resources: [],
 };
 

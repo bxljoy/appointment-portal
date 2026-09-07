@@ -10,7 +10,8 @@ addresses, branch, and cost ceiling.
 runs the three opt-in AWS files in order: managed authentication at desktop and mobile
 sizes, API/edge controls,
 and booking races. The child environment contains only basic runtime variables,
-four private credential-file paths, the CloudFront/API/S3 coordinates, and the AWS
+four private credential-file paths, the CloudFront/API/S3 coordinates, the exact
+manifest Cognito issuer/client/pool/domain authority, and the AWS
 opt-in marker. It does not inherit AWS credentials, GitHub tokens, controlled email
 values, passwords, or unrelated `PORTAL_E2E_*` variables.
 
@@ -25,11 +26,13 @@ verification, initial patient-role inspection, sign-in, sign-out, and password
 recovery through the controlled inbox. Record that observation without an address:
 
 ```sh
-pnpm demo:confirm-registration -- --signup-alias signup-check --confirm-all
+pnpm demo:confirm-registration
 ```
 
-The confirmation is bound to the ready manifest commit and current deployment
-window. Without it, standalone verification writes an incomplete manual check and
+The command requires an interactive TTY, refuses flags and CI/piped input, and asks
+for a non-email alias plus an explicit `yes` for every checklist item. The confirmation
+is bound to the account, region, ready commit, FrontendUrl, DistributionId, and a six-hour
+expiry. Without it, standalone verification writes an incomplete manual check and
 exits unsuccessfully. Provisioned accounts cannot create this record.
 
 Verification writes sanitized status and request IDs to
@@ -41,12 +44,13 @@ failure-page snapshots, debug protocol logs, UI mode, and injected reporters bef
 credential entry. Access and ID tokens live only in worker memory.
 
 The public performance command uses the exact pinned Lighthouse version. Authenticated
-appointment-route measurement launches a temporary-profile Chromium session, signs in
-from one private patient credential file, and uses Lighthouse user-flow instrumentation
+appointment-route measurement launches a scrubbed child process and temporary-profile Chromium session, signs in
+from one private patient credential file, and uses a Lighthouse timespan around reauthentication
 against the authenticated appointment DOM. It rejects the sign-in DOM even when the
 URL is still `/appointments`, closes the browser, and removes the temporary profile.
-Run three repeats, investigate a median below 90, and describe results as Lighthouse
-lab data. The private performance record includes the ready source commit, UTC time,
+Run three repeats and investigate a public navigation median below 90. Authenticated
+timespan evidence records only the metrics that timespan mode supplies and has no
+navigation score. Describe both as Lighthouse lab data. The private performance record includes the ready source commit, UTC time,
 Lighthouse version, target, mode, mobile profile, and run count; stale or mismatched
 records are rejected.
 

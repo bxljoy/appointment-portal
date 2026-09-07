@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { accounts, names, startLocalPortal, type Account } from './local-auth.setup.js';
 import { assertAwsArtifactPrivacy } from './aws-artifact-privacy.js';
 import { readPrivateFile } from '../../scripts/private-file.js';
+import { assertManagedLoginOrigin, validatePublicCognitoConfig, type AwsAuthority } from '../../scripts/aws-authority.js';
 
 type Portal = Awaited<ReturnType<typeof startLocalPortal>>;
 const isAwsProject = (name: string) => name === 'aws' || name === 'aws-mobile';
@@ -50,12 +51,18 @@ export async function signIn(page: Page, account: Account) {
   } else {
     try {
       if (process.env.PORTAL_E2E_AWS !== '1' || new URL(page.url()).protocol !== 'https:') throw new Error();
-      const config = await (await page.request.get(new URL('/config.json', page.url()).href)).json() as { mode: string; cognitoDomain: string };
-      if (config.mode !== 'cognito' || !/^https:\/\/[a-z0-9-]+\.auth\.[a-z0-9-]+\.amazoncognito\.com$/.test(config.cognitoDomain)) throw new Error();
-      const credentials = await awsCredential(account);
+      const authority: AwsAuthority = { account: process.env.PORTAL_E2E_AWS_ACCOUNT ?? '', region: process.env.PORTAL_E2E_AWS_REGION ?? '',
+        issuer: process.env.PORTAL_E2E_AWS_ISSUER ?? '', clientId: process.env.PORTAL_E2E_AWS_CLIENT_ID ?? '',
+        userPoolId: process.env.PORTAL_E2E_AWS_USER_POOL_ID ?? '', cognitoDomain: process.env.PORTAL_E2E_AWS_COGNITO_DOMAIN ?? '',
+        frontendUrl: process.env.PORTAL_E2E_AWS_URL ?? '' };
+      validatePublicCognitoConfig(await (await page.request.get(new URL('/config.json', page.url()).href)).json(), authority);
       await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-      await page.waitForURL((url) => url.origin === config.cognitoDomain);
+      await page.waitForURL((url) => url.origin === authority.cognitoDomain);
+      assertManagedLoginOrigin(page.url(), authority);
+      const credentials = await awsCredential(account);
+      assertManagedLoginOrigin(page.url(), authority);
       await page.getByLabel('Email', { exact: true }).fill(credentials.email);
+      assertManagedLoginOrigin(page.url(), authority);
       await page.getByLabel('Password', { exact: true }).fill(credentials.password);
       await page.getByRole('button', { name: 'Sign in', exact: true }).click();
       await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toBeVisible();
