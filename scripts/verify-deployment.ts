@@ -4,8 +4,12 @@ import { loadDeploymentManifest } from './lifecycle-types.js';
 import { awsPlaywrightEnvironment, awsPlaywrightFileEnvironment, readAwsDemoInput } from './aws-lifecycle.js';
 import { verifyAws, type VerificationSummary } from './verify-aws.js';
 import { writePrivateJson } from './private-file.js';
+import { CloudWatchLogsClient } from '@aws-sdk/client-cloudwatch-logs';
+import { cloudWatchCorrelationAdapter } from './cloudwatch-correlation.js';
+import { loadManualRegistration } from './manual-registration.js';
 
-export const verifyDeployment = async (paths: { deployment?: string; config?: string; verification?: string } = {}): Promise<VerificationSummary> => {
+export const verifyDeployment = async (paths: { deployment?: string; config?: string; verification?: string; manualRegistration?: string } = {},
+  dependencies: { correlation?: ReturnType<typeof cloudWatchCorrelationAdapter>; now?: () => Date } = {}): Promise<VerificationSummary> => {
   const manifest = await loadDeploymentManifest(paths.deployment);
   if (!manifest || manifest.phase !== 'ready') throw new Error('A ready deployment manifest is required.');
   const config = await readAwsDemoInput(paths.config ?? resolve('.runtime/demo-config.json'));
@@ -18,8 +22,11 @@ export const verifyDeployment = async (paths: { deployment?: string; config?: st
   const bucket = manifest.outputs.WebBucketName;
   if (!apiUrl || !bucket) throw new Error('Deployed API and bucket outputs are required.');
   const fileEnvironment = await awsPlaywrightFileEnvironment(config, manifest);
+  const correlation = dependencies.correlation ?? cloudWatchCorrelationAdapter(new CloudWatchLogsClient({ region: manifest.region }),
+    ['profiles', 'availability', 'appointments'].map((name) => `/appointment-portal/${manifest.appStack}/api/${name}`));
+  const manualRegistration = await loadManualRegistration(paths.manualRegistration);
   const summary = await verifyAws(manifest, { environment: awsPlaywrightEnvironment(frontendUrl, fileEnvironment, process.env,
-    { apiUrl, bucket, region: manifest.region }) });
+    { apiUrl, bucket, region: manifest.region }), correlation, manualRegistration, now: dependencies.now });
   await writePrivateJson(paths.verification ?? resolve('.runtime/verification.json'), summary);
   if (summary.checks.some((check) => check.status === 'failed')) throw new Error('Deployed AWS verification failed.');
   return summary;

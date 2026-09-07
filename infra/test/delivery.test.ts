@@ -100,4 +100,12 @@ describe('GitHub OIDC delivery identity', () => {
       'ecr:ListTagsForResource', 'ssm:DescribeParameters', 'ssm:ListTagsForResource',
     ]) expect(json).toContain(action);
   });
+
+  it('allows request-correlation reads only from application API log groups', () => {
+    const template = synth();
+    const json = JSON.stringify(template.toJSON());
+    expect(json).toContain('logs:FilterLogEvents');
+    expect(json).toContain(':log-group:/appointment-portal/AppointmentPortal/api/*');
+    expect(json).not.toContain('cloudwatch:GetMetricData');
+  });
 });

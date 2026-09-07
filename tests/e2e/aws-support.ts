@@ -3,6 +3,7 @@ import type { APIRequestContext, APIResponse, Page } from '@playwright/test';
 import { z } from 'zod';
 import { awsCredential } from './fixtures.js';
 import type { Account } from './local-auth.setup.js';
+import { isAwsRequestId } from '../../scripts/aws-request-id.js';
 
 const configSchema = z.strictObject({
   mode: z.literal('cognito'), apiBaseUrl: z.literal('/api'), issuer: z.url().startsWith('https://'),
@@ -11,7 +12,6 @@ const configSchema = z.strictObject({
 });
 const tokenSchema = z.object({ access_token: z.string().min(100), id_token: z.string().min(100),
   refresh_token: z.string().min(1).optional(), expires_in: z.number().positive(), token_type: z.literal('Bearer'), scope: z.string() });
-const requestIdPattern = /^[A-Za-z0-9_-]{8,128}$/;
 
 export type AwsTokens = z.infer<typeof tokenSchema>;
 export type AwsRuntimeConfig = z.infer<typeof configSchema>;
@@ -48,15 +48,33 @@ async function submitManagedLogin(page: Page, account: Account, expectedOrigin: 
   }
 }
 
+type ManagedLoginOutcome<T> = { kind: 'callback'; value: T } | { kind: 'form' };
+export async function completeManagedLogin<T>(input: {
+  callback: Promise<T>; waitForCredentialForm: () => Promise<void>; submitCredentials: () => Promise<void>;
+}): Promise<T> {
+  const outcome = await Promise.race<ManagedLoginOutcome<T>>([
+    input.callback.then((value) => ({ kind: 'callback', value })),
+    input.waitForCredentialForm().then(() => ({ kind: 'form' })),
+  ]);
+  if (outcome.kind === 'callback') return outcome.value;
+  await input.submitCredentials();
+  return input.callback;
+}
+
+const credentialFormVisible = async (page: Page) => {
+  await page.getByLabel('Email', { exact: true }).waitFor({ state: 'visible' });
+};
+
 export async function signInThroughApplication(page: Page, account: Account): Promise<{ tokens: AwsTokens; authorizationUrl: URL }> {
   const config = await awsRuntimeConfig(page);
   const tokenResponse = page.waitForResponse((response) => response.request().method() === 'POST' &&
     response.url() === new URL('/oauth2/token', config.cognitoDomain).href);
+  const authorizationRequest = page.waitForRequest((request) => request.method() === 'GET' &&
+    request.url().startsWith(new URL('/oauth2/authorize', config.cognitoDomain).href));
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-  await page.waitForURL((url) => url.origin === new URL(config.cognitoDomain).origin);
-  const authorizationUrl = new URL(page.url());
-  await submitManagedLogin(page, account, new URL(config.cognitoDomain).origin);
-  const response = await tokenResponse;
+  const authorizationUrl = new URL((await authorizationRequest).url());
+  const response = await completeManagedLogin({ callback: tokenResponse, waitForCredentialForm: () => credentialFormVisible(page),
+    submitCredentials: () => submitManagedLogin(page, account, new URL(config.cognitoDomain).origin) });
   if (!response.ok()) throw new Error('Managed token exchange failed.');
   const tokens = tokenSchema.parse(await response.json());
   await page.waitForURL((url) => url.origin === new URL(config.redirectUri).origin);
@@ -65,6 +83,12 @@ export async function signInThroughApplication(page: Page, account: Account): Pr
 
 export async function acquireTokens(page: Page, account: Account, scope = 'openid profile portal/access'): Promise<AwsTokens> {
   const config = await awsRuntimeConfig(page);
+  return acquireTokensWithConfig(page, config, scope,
+    () => submitManagedLogin(page, account, new URL(config.cognitoDomain).origin));
+}
+
+export async function acquireTokensWithConfig(page: Page, config: AwsRuntimeConfig, scope: string,
+  submitCredentials: () => Promise<void>): Promise<AwsTokens> {
   const verifier = randomBytes(48).toString('base64url');
   const challenge = createHash('sha256').update(verifier).digest('base64url');
   const state = randomBytes(24).toString('base64url');
@@ -72,19 +96,44 @@ export async function acquireTokens(page: Page, account: Account, scope = 'openi
   const authorize = new URL('/oauth2/authorize', config.cognitoDomain);
   for (const [name, value] of Object.entries({ client_id: config.clientId, response_type: 'code', redirect_uri: config.redirectUri,
     scope, code_challenge_method: 'S256', code_challenge: challenge, state, nonce })) authorize.searchParams.set(name, value);
-  await page.goto(authorize.href);
-  await submitManagedLogin(page, account, new URL(config.cognitoDomain).origin);
-  await page.waitForURL((url) => url.origin === new URL(config.redirectUri).origin && url.searchParams.has('code'));
-  const callback = new URL(page.url());
-  if (callback.searchParams.get('state') !== state) throw new Error('Managed login returned an invalid OAuth state.');
-  const code = callback.searchParams.get('code');
-  if (!code) throw new Error('Managed login did not return an authorization code.');
-  const body = new URLSearchParams({ grant_type: 'authorization_code', client_id: config.clientId,
-    redirect_uri: config.redirectUri, code, code_verifier: verifier });
-  const response = await fetch(new URL('/oauth2/token', config.cognitoDomain), { method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body, redirect: 'error' });
-  if (!response.ok) throw new Error('Managed token exchange failed.');
-  return tokenSchema.parse(await response.json());
+  const callbackTarget = new URL(config.redirectUri);
+  let resolveIntercepted!: (url: URL) => void;
+  const intercepted = new Promise<URL>((resolve) => { resolveIntercepted = resolve; });
+  const callbackMatcher = `${new URL(config.cognitoDomain).origin}/**`;
+  await page.route(callbackMatcher, async (route) => {
+    const candidate = new URL(route.request().url());
+    if (candidate.origin === callbackTarget.origin && candidate.pathname === callbackTarget.pathname) {
+      await route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>OAuth callback captured</title>' });
+      resolveIntercepted(candidate); return;
+    }
+    const upstream = await route.fetch({ maxRedirects: 0 });
+    const location = upstream.headers().location;
+    if (upstream.status() >= 300 && upstream.status() < 400 && location) {
+      const redirect = new URL(location, candidate);
+      if (redirect.origin === callbackTarget.origin && redirect.pathname === callbackTarget.pathname) {
+        await route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>OAuth callback captured</title>' });
+        resolveIntercepted(redirect); return;
+      }
+    }
+    await route.fulfill({ response: upstream });
+  });
+  try {
+    await page.goto(authorize.href);
+    const callback = await completeManagedLogin({ callback: intercepted, waitForCredentialForm: () => credentialFormVisible(page), submitCredentials });
+    if (callback.searchParams.get('state') !== state) throw new Error('Managed login returned an invalid OAuth state.');
+    const code = callback.searchParams.get('code');
+    if (!code) throw new Error('Managed login did not return an authorization code.');
+    const body = new URLSearchParams({ grant_type: 'authorization_code', client_id: config.clientId,
+      redirect_uri: config.redirectUri, code, code_verifier: verifier });
+    const response = await fetch(new URL('/oauth2/token', config.cognitoDomain), { method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body, redirect: 'error' });
+    if (!response.ok) throw new Error('Managed token exchange failed.');
+    const tokens = tokenSchema.parse(await response.json());
+    if (jwtClaims(tokens.id_token).nonce !== nonce) throw new Error('Managed login returned an invalid OAuth nonce.');
+    return tokens;
+  } finally {
+    await page.unroute(callbackMatcher);
+  }
 }
 
 export function jwtClaims(token: string): Record<string, unknown> {
@@ -106,7 +155,7 @@ export async function apiContext(playwright: RequestFactory, accessToken: string
 
 export function recordRequestId(response: APIResponse): string {
   const requestId = response.headers()['x-request-id'];
-  if (!requestId || !requestIdPattern.test(requestId)) throw new Error('The deployed API response omitted a valid request ID.');
+  if (!requestId || !isAwsRequestId(requestId)) throw new Error('The deployed API response omitted a valid request ID.');
   process.stdout.write(`PORTAL_REQUEST_ID:${requestId}\n`);
   return requestId;
 }

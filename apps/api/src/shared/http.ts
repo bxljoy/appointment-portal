@@ -119,41 +119,47 @@ export const createLambdaHandler = <Service>({
   route,
   now = () => performance.now(),
   writeLog,
-}: LambdaHandlerOptions<Service>) => async (event: HttpApiEvent): Promise<HttpResponse> => {
-  const startedAt = now();
-  const requestId = nonEmpty(event.requestContext.requestId) ? event.requestContext.requestId : 'unknown-request';
-  let response: HttpResponse;
+}: LambdaHandlerOptions<Service>) => {
+  let nextInvocationIsCold = true;
+  return async (event: HttpApiEvent): Promise<HttpResponse> => {
+    const coldStart = nextInvocationIsCold;
+    nextInvocationIsCold = false;
+    const startedAt = now();
+    const requestId = nonEmpty(event.requestContext.requestId) ? event.requestContext.requestId : 'unknown-request';
+    let response: HttpResponse;
 
-  try {
-    const body = parseJsonBody(event.body, event.headers, event.isBase64Encoded);
-    const actor = readActor(event);
-    const query = parseQuery(event.rawQueryString);
-    const service = await loadService();
-    response = await route({
-      method: event.requestContext.http.method.toUpperCase(),
-      path: event.rawPath,
-      query,
-      body,
-      actor,
-      requestId,
-    }, service);
-  } catch (error) {
-    response = respondError(error, requestId);
-  }
+    try {
+      const body = parseJsonBody(event.body, event.headers, event.isBase64Encoded);
+      const actor = readActor(event);
+      const query = parseQuery(event.rawQueryString);
+      const service = await loadService();
+      response = await route({
+        method: event.requestContext.http.method.toUpperCase(),
+        path: event.rawPath,
+        query,
+        body,
+        actor,
+        requestId,
+      }, service);
+    } catch (error) {
+      response = respondError(error, requestId);
+    }
 
-  try {
-    writeCompletionLog({
-      requestId,
-      operation: safeOperation(event.routeKey),
-      status: response.statusCode,
-      durationMs: Math.max(0, Math.round(now() - startedAt)),
-      errorCode: responseErrorCode(response),
-    }, writeLog);
-  } catch {
-    // Logging must not replace the safe HTTP response.
-  }
+    try {
+      writeCompletionLog({
+        requestId,
+        operation: safeOperation(event.routeKey),
+        status: response.statusCode,
+        durationMs: Math.max(0, Math.round(now() - startedAt)),
+        errorCode: responseErrorCode(response),
+        coldStart,
+      }, writeLog);
+    } catch {
+      // Logging must not replace the safe HTTP response.
+    }
 
-  return response;
+    return response;
+  };
 };
 
 export const parseJsonBody = (

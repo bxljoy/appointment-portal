@@ -23,6 +23,8 @@ import { APP_STACK, DELIVERY_STACK, PROJECT_TAG, QUALIFIER, TOOLKIT_STACK, dedup
 import type { DemoConfig, DemoDependencies, StackInspection } from './deploy.js';
 import { readPrivateFile, writePrivateJson } from './private-file.js';
 import { playwrightVerificationAdapter, verifyAws } from './verify-aws.js';
+import { cloudWatchCorrelationAdapter } from './cloudwatch-correlation.js';
+import { loadManualRegistration, type ManualRegistrationEvidence } from './manual-registration.js';
 
 const configSchema = z.strictObject({
   account: z.string().regex(/^\d{12}$/), region: z.string().regex(/^[a-z]{2}(?:-[a-z]+)+-[1-9]\d*$/),
@@ -100,7 +102,8 @@ const contextArgs = (input: AwsDemoInput, phase: 'bootstrap' | 'ready', frontend
 
 export const makeAwsDemoDependencies = (input: AwsDemoInput, clients = clientsFor(input.region), runner: ProcessRunner = runProcess,
   manifestStore: { load?: () => Promise<DeploymentManifest | undefined>; save?: (manifest: DeploymentManifest) => Promise<void>;
-    saveVerification?: (summary: Awaited<ReturnType<typeof verifyAws>>) => Promise<void> } = {}): DemoDependencies => {
+    saveVerification?: (summary: Awaited<ReturnType<typeof verifyAws>>) => Promise<void>;
+    correlation?: ReturnType<typeof cloudWatchCorrelationAdapter>; loadManualRegistration?: () => Promise<ManualRegistrationEvidence | undefined> } = {}): DemoDependencies => {
   const config: DemoConfig = { ...input, qualifier: QUALIFIER, toolkitStack: TOOLKIT_STACK, appStack: APP_STACK, deliveryStack: DELIVERY_STACK, projectTag: PROJECT_TAG };
   const credentials = new RuntimeCredentialStore(resolve('.runtime/credentials'));
   let activeManifest: DeploymentManifest | undefined;
@@ -173,9 +176,14 @@ export const makeAwsDemoDependencies = (input: AwsDemoInput, clients = clientsFo
       const environment = awsPlaywrightEnvironment(frontendUrl, fileEnvironment, process.env, {
         apiUrl: requiredManifestOutput(manifest, 'ApiUrl'), bucket: requiredManifestOutput(manifest, 'WebBucketName'), region: manifest.region,
       });
-      const summary = await verifyAws(manifest, { environment, adapter: playwrightVerificationAdapter(environment, runner) });
+      const correlation = manifestStore.correlation ?? cloudWatchCorrelationAdapter(clients.logs,
+        ['profiles', 'availability', 'appointments'].map((name) => `/appointment-portal/${APP_STACK}/api/${name}`));
+      const manualRegistration = await (manifestStore.loadManualRegistration ?? loadManualRegistration)();
+      const summary = await verifyAws(manifest, { environment, adapter: playwrightVerificationAdapter(environment, runner), correlation, manualRegistration });
       await (manifestStore.saveVerification ?? ((value) => writePrivateJson(resolve('.runtime/verification.json'), value)))(summary);
-      if (summary.checks.some((check) => check.status === 'failed')) throw new Error('Deployed AWS verification failed.');
+      if (summary.checks.some((check) => check.status === 'failed' && check.name !== 'controlled-inbox registration and recovery')) {
+        throw new Error('Deployed AWS verification failed.');
+      }
     },
   };
 

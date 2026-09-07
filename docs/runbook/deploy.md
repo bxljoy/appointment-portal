@@ -17,7 +17,20 @@ values, passwords, or unrelated `PORTAL_E2E_*` variables.
 ```sh
 pnpm demo:verify
 pnpm demo:measure -- "https://DEPLOYED-CLOUDFRONT/" public
+PORTAL_LIGHTHOUSE_CREDENTIAL_FILE=.runtime/credentials/PATIENT_FILE pnpm demo:measure -- "https://DEPLOYED-CLOUDFRONT/appointments" authenticated
 ```
+
+Before the final `pnpm demo:verify`, a person must complete self-registration, email
+verification, initial patient-role inspection, sign-in, sign-out, and password
+recovery through the controlled inbox. Record that observation without an address:
+
+```sh
+pnpm demo:confirm-registration -- --signup-alias signup-check --confirm-all
+```
+
+The confirmation is bound to the ready manifest commit and current deployment
+window. Without it, standalone verification writes an incomplete manual check and
+exits unsuccessfully. Provisioned accounts cannot create this record.
 
 Verification writes sanitized status and request IDs to
 `.runtime/verification.json`; performance writes three mobile runs to
@@ -28,10 +41,14 @@ failure-page snapshots, debug protocol logs, UI mode, and injected reporters bef
 credential entry. Access and ID tokens live only in worker memory.
 
 The public performance command uses the exact pinned Lighthouse version. Authenticated
-appointment-route measurement must call `measureWeb` with a user-flow adapter that
-maintains or explicitly reacquires the in-memory Cognito session. The navigation CLI
-refuses authenticated mode so it cannot silently score the sign-in page. Run three
-repeats, investigate a median below 90, and describe results as Lighthouse lab data.
+appointment-route measurement launches a temporary-profile Chromium session, signs in
+from one private patient credential file, and uses Lighthouse user-flow instrumentation
+against the authenticated appointment DOM. It rejects the sign-in DOM even when the
+URL is still `/appointments`, closes the browser, and removes the temporary profile.
+Run three repeats, investigate a median below 90, and describe results as Lighthouse
+lab data. The private performance record includes the ready source commit, UTC time,
+Lighthouse version, target, mode, mobile profile, and run count; stale or mismatched
+records are rejected.
 
 The access-token-expiry case intentionally waits until the deployed five-minute token
 expires. Keep this separate from the controlled throttling check, and do not increase
@@ -133,6 +150,14 @@ The delivery role assumes only project qualifier bootstrap roles and has bounded
 publication, migration, provisioning, and inventory access. The bootstrap
 CloudFormation execution role is the separate, broader provisioning authority.
 Application Lambda roles keep feature-specific permissions.
+
+Deployed verification correlates allowlisted API response request IDs with completion
+records from `/appointment-portal/AppointmentPortal/api/{profiles,availability,appointments}`.
+The delivery role therefore needs only `logs:FilterLogEvents` on those application API
+log-group ARNs. It does not need log-body persistence, `cloudwatch:GetMetricData`, or
+access to unrelated log groups. The persisted summary contains only request count,
+cold/warm counts, maximum observed duration, and fixed text; warm/cold values are
+diagnostic observations, not an SLA.
 
 ## Two-pass deployment
 

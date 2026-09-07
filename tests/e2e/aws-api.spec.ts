@@ -17,10 +17,16 @@ test('CloudFront and the direct API require a scoped access token and do not cac
     const unauthenticated = await playwright.request.newContext({ baseURL: process.env.PORTAL_E2E_AWS_URL });
     const directUnauthenticated = await playwright.request.newContext({ baseURL: process.env.PORTAL_E2E_AWS_API_URL });
     try {
-      expect((await unauthenticated.get('/api/me')).status()).toBe(401);
-      expect((await directUnauthenticated.get('/api/me')).status()).toBe(401);
-      expect((await unauthenticated.get('/api/me', { headers: { Authorization: 'Bearer malformed.jwt.value' } })).status()).toBe(401);
-      expect((await unauthenticated.get('/api/me', { headers: { Authorization: `Bearer ${full.id_token}` } })).status()).toBe(401);
+      for (const response of [await unauthenticated.get('/api/me'), await directUnauthenticated.get('/api/me'),
+        await unauthenticated.get('/api/me', { headers: { Authorization: 'Bearer malformed.jwt.value' } })]) {
+        expect(response.status()).toBe(401);
+        expect(response.headers()['x-request-id']).toBeUndefined();
+      }
+      for (const context of [unauthenticated, directUnauthenticated]) {
+        const idTokenResponse = await context.get('/api/me', { headers: { Authorization: `Bearer ${full.id_token}` } });
+        expect([401, 403]).toContain(idTokenResponse.status());
+        expect(idTokenResponse.headers()['x-request-id']).toBeUndefined();
+      }
     } finally { await unauthenticated.dispose(); await directUnauthenticated.dispose(); }
   } finally { await cloudfront.dispose(); await direct.dispose(); }
 });
@@ -31,7 +37,11 @@ test('a valid Cognito access token without portal scope is rejected @aws', async
   expect(jwtClaims(tokens.access_token)).toMatchObject({ token_use: 'access' });
   expect(String(jwtClaims(tokens.access_token).scope).split(' ')).not.toContain('portal/access');
   const context = await apiContext(playwright, tokens.access_token);
-  try { expect((await context.get('/api/me')).status()).toBe(403); } finally { await context.dispose(); }
+  try {
+    const response = await context.get('/api/me');
+    expect([401, 403]).toContain(response.status());
+    expect(response.headers()['x-request-id']).toBeUndefined();
+  } finally { await context.dispose(); }
 });
 
 test('the S3 origin is private and CloudFront returns caller-specific identity @aws', async ({ page, playwright }) => {

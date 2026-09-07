@@ -16,11 +16,14 @@ let configPath: string;
 let accountsPath: string;
 let deploymentPath: string;
 let verificationPath: string;
+let manualRegistrationPath: string;
+const correlation = { observe: async () => ({ requestCount: 1, coldCount: 1, warmCount: 0, maxDurationMs: 1 }) };
 
 beforeEach(async () => {
   root = await mkdtemp(join(await realpath(tmpdir()), 'portal-verify-deployment-'));
   configPath = join(root, 'demo-config.json'); accountsPath = join(root, 'accounts.json');
   deploymentPath = join(root, 'deployment.json'); verificationPath = join(root, 'verification.json');
+  manualRegistrationPath = join(root, 'manual-registration.json');
   const accounts = [
     { alias: 'patient-a', email: 'patient-a@example.com', displayName: 'Patient A', role: 'patient' },
     { alias: 'patient-b', email: 'patient-b@example.com', displayName: 'Patient B', role: 'patient' },
@@ -32,6 +35,8 @@ beforeEach(async () => {
     maxCostUsd: 5, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), accountsFile: accountsPath, priceReport: accountsPath }), { mode: 0o600 });
   await writeFile(deploymentPath, JSON.stringify({ ...manifest, outputs: { ...manifest.outputs, UserPoolId: 'eu-north-1_fixture',
     ApiUrl: 'https://api.example.com', WebBucketName: 'fixture-bucket' } }), { mode: 0o600 });
+  await writeFile(manualRegistrationPath, JSON.stringify({ commit: manifest.sourceCommit, checkedAt: new Date().toISOString(),
+    signupAlias: 'signup-check', status: 'manual-passed' }), { mode: 0o600 });
   processMock.mockClear();
 });
 
@@ -46,7 +51,7 @@ it('standalone verification maps all four aliases to deterministic private files
   };
   for (const [name, value] of Object.entries(hostile)) vi.stubEnv(name, value);
   try {
-    const summary = await verifyDeployment({ deployment: deploymentPath, config: configPath, verification: verificationPath });
+    const summary = await verifyDeployment({ deployment: deploymentPath, config: configPath, verification: verificationPath, manualRegistration: manualRegistrationPath }, { correlation });
     expect(processMock).toHaveBeenCalledTimes(3);
     expect(processMock.mock.calls.map(([, args]) => args)).toEqual([
       ['exec', 'playwright', 'test', 'tests/e2e/aws-auth.spec.ts', '--project=aws', '--project=aws-mobile'],
@@ -71,4 +76,12 @@ it('refuses an output-empty recovery manifest before starting standalone verific
   await writeFile(deploymentPath, JSON.stringify({ ...manifest, phase: 'bootstrap', outputs: {}, resources: [] }), { mode: 0o600 });
   await expect(verifyDeployment({ deployment: deploymentPath, config: configPath, verification: verificationPath })).rejects.toThrow(/ready deployment manifest/i);
   expect(processMock).not.toHaveBeenCalled();
+});
+
+it('does not report standalone verification success while the human registration gate is incomplete', async () => {
+  await expect(verifyDeployment({ deployment: deploymentPath, config: configPath, verification: verificationPath,
+    manualRegistration: join(root, 'missing-manual.json') }, { correlation })).rejects.toThrow(/verification failed/i);
+  const persisted = JSON.parse(await readFile(verificationPath, 'utf8')) as { checks: Array<{ name: string; status: string }> };
+  expect(persisted.checks.at(-1)).toEqual({ name: 'controlled-inbox registration and recovery', status: 'failed',
+    detail: 'Manual controlled-inbox registration and recovery is incomplete.' });
 });

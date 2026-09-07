@@ -57,7 +57,7 @@ describe('structured request completion logging', () => {
     expect(cloudWatchLines[0]!.trim().split('\n')).toHaveLength(1);
     const record = JSON.parse(cloudWatchLines[0]!);
     expect(record).toEqual({ requestId: 'request-1', operation: 'GET /api/me', status,
-      durationMs: 12, errorCode: status === 500 ? 'INTERNAL_ERROR' : null });
+      durationMs: 12, errorCode: status === 500 ? 'INTERNAL_ERROR' : null, coldStart: true });
     expect(record.requestId).toBe(response.headers['X-Request-Id']);
     expect(cloudWatchLines[0]).not.toMatch(/sentinel-password|sentinel-token|patient-sub|lambda-invocation-id/);
   });
@@ -71,6 +71,7 @@ describe('structured request completion logging', () => {
         status: 200,
         durationMs: 12,
         errorCode: null,
+        coldStart: true,
         password: 'sentinel-password',
         authorization: 'Bearer sentinel-token',
         body: { patient: 'private' },
@@ -85,6 +86,7 @@ describe('structured request completion logging', () => {
       status: 200,
       durationMs: 12,
       errorCode: null,
+      coldStart: true,
     });
     expect(write.mock.calls[0]![0]).not.toContain('sentinel-password');
     expect(write.mock.calls[0]![0]).not.toContain('sentinel-token');
@@ -112,6 +114,7 @@ describe('structured request completion logging', () => {
       status: 200,
       durationMs: 12,
       errorCode: null,
+      coldStart: true,
     });
     expect(lines[0]).not.toContain('sentinel-token');
   });
@@ -140,6 +143,7 @@ describe('structured request completion logging', () => {
       status: 500,
       durationMs: 5,
       errorCode: 'INTERNAL_ERROR',
+      coldStart: true,
     });
     expect(`${response.body}\n${lines[0]}`).not.toContain('sentinel-password');
     expect(`${response.body}\n${lines[0]}`).not.toContain('sentinel-token');
@@ -158,5 +162,16 @@ describe('structured request completion logging', () => {
 
     expect(JSON.parse(lines[0]!)).toMatchObject({ operation: 'GET /api/clinicians/{id}' });
     expect(lines[0]).not.toContain(id);
+  });
+
+  it('marks only the first invocation of one Lambda execution environment as cold', async () => {
+    const lines: string[] = [];
+    const handler = createLambdaHandler({
+      loadService: async () => service(async () => me), route: handleProfiles,
+      now: vi.fn().mockReturnValue(100), writeLog: (line) => lines.push(line),
+    });
+    await handler(lambdaEvent('GET /api/me', 'patient-sub'));
+    await handler(lambdaEvent('GET /api/me', 'patient-sub'));
+    expect(lines.map((line) => JSON.parse(line).coldStart)).toEqual([true, false]);
   });
 });

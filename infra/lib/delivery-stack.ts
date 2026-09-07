@@ -87,6 +87,10 @@ export class DeliveryStack extends Stack {
       ],
     }));
     this.role.addToPolicy(new iam.PolicyStatement({
+      actions: ['logs:FilterLogEvents'],
+      resources: [`arn:${this.partition}:logs:${region}:${account}:log-group:/appointment-portal/AppointmentPortal/api/*`],
+    }));
+    this.role.addToPolicy(new iam.PolicyStatement({
       actions: ['ecr:ListTagsForResource'], resources: [`arn:${this.partition}:ecr:${region}:${account}:repository/cdk-${config.qualifier}-container-assets-${account}-${region}`],
     }));
     this.role.addToPolicy(new iam.PolicyStatement({

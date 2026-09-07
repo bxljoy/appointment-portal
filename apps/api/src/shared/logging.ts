@@ -6,6 +6,7 @@ export type CompletionLog = {
   status: number;
   durationMs: number;
   errorCode: string | null;
+  coldStart: boolean;
 };
 
 export const writeCompletionLog = (
@@ -14,6 +15,6 @@ export const writeCompletionLog = (
   // A single stdout JSON line preserves these application fields at the top level.
   write: (line: string) => void = (line) => { stdout.write(`${line}\n`); },
 ): void => {
-  const { requestId, operation, status, durationMs, errorCode } = event;
-  write(JSON.stringify({ requestId, operation, status, durationMs, errorCode }));
+  const { requestId, operation, status, durationMs, errorCode, coldStart } = event;
+  write(JSON.stringify({ requestId, operation, status, durationMs, errorCode, coldStart }));
 };

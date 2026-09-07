@@ -16,6 +16,8 @@ changing the status to verified:
   cancellation reopening, and clinician cancel-withdraw;
 - uncached CloudFront API responses, protected direct API Gateway, private S3,
   nested SPA refresh, and non-HTML missing-asset behavior;
+- request-correlated application completion records, including bounded warm/cold
+  counts and observed duration without log bodies or an SLA claim;
 - one manual self-registration, email verification, initial patient role, sign-out,
   sign-in, and password recovery with a controlled inbox.
 
