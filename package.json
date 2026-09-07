@@ -18,7 +18,7 @@
     "test:e2e": "playwright test --project=local-desktop --project=local-mobile",
     "db:setup:aws": "tsx scripts/provision.ts",
     "demo:prepare": "tsx scripts/prepare-demo-config.ts",
-    "demo:preflight": "tsx scripts/preflight.ts .runtime/demo-config.json",
+    "demo:preflight": "tsx scripts/preflight-cli.ts .runtime/demo-config.json",
     "demo:setup-delivery": "tsx scripts/setup-delivery.ts .runtime/demo-config.json",
     "demo:deploy": "tsx scripts/deploy.ts .runtime/demo-config.json",
     "demo:verify": "tsx scripts/verify-deployment.ts",
