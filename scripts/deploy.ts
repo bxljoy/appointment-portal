@@ -9,6 +9,7 @@ export type DemoConfig = {
   toolkitStack: 'AppointmentPortalToolkit'; appStack: 'AppointmentPortal'; projectTag: 'appointment-portal';
   deliveryStack?: 'AppointmentPortalDelivery';
   durationHours: number; maxCostUsd: number;
+  lambdaConcurrencyMode?: 'reserved' | 'shared-unreserved';
   sourceCommit?: string;
   expiresAt?: string;
   repository?: string;

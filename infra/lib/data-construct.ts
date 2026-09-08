@@ -97,7 +97,8 @@ export class DataConstruct extends Construct {
       entry: join(workspaceRoot, 'packages/database/src/lambda.ts'), projectRoot: workspaceRoot,
       depsLockFilePath: join(workspaceRoot, 'pnpm-lock.yaml'),
       runtime: Runtime.NODEJS_24_X, architecture: Architecture.ARM_64,
-      memorySize: 512, timeout: Duration.seconds(120), reservedConcurrentExecutions: 1,
+      memorySize: 512, timeout: Duration.seconds(120),
+      ...(config.lambdaConcurrencyMode === 'reserved' ? { reservedConcurrentExecutions: 1 } : {}),
       vpc: this.vpc, vpcSubnets: isolated, securityGroups: [this.migrationSecurityGroup], loggingFormat: LoggingFormat.JSON,
       logGroup: new LogGroup(this, 'MigrationLogs', {
         logGroupName: `/appointment-portal/${Stack.of(this).stackName}/migration`,

@@ -74,7 +74,8 @@ export const setupDelivery = async (configPath: string, dependencies: SetupDeliv
   await runner('pnpm', ['--filter', '@portal/infra', 'exec', 'cdk', 'deploy', DELIVERY_STACK, '--exclusively', '--require-approval', 'never',
     '--outputs-file', outputPath,
     '-c', `account=${config.account}`, '-c', `region=${config.region}`, '-c', `postgresVersion=${config.postgresVersion}`,
-    '-c', 'phase=bootstrap', '-c', `qualifier=${QUALIFIER}`, '-c', `repository=${config.repository}`, '-c', `branch=${config.branch}`,
+    '-c', 'phase=bootstrap', '-c', `lambdaConcurrencyMode=${config.lambdaConcurrencyMode}`,
+    '-c', `qualifier=${QUALIFIER}`, '-c', `repository=${config.repository}`, '-c', `branch=${config.branch}`,
     '-c', `sourceCommit=${config.sourceCommit}`,
     ...(oidcProviderArn ? ['-c', `oidcProviderArn=${oidcProviderArn}`] : [])]);
   await saveManifest(recovery);

@@ -10,13 +10,13 @@ import { describe, expect, it } from 'vitest';
 import { PortalStack } from '../lib/portal-stack.js';
 
 const env = { account: '111111111111', region: 'eu-north-1' };
-const synth = (phase: 'bootstrap' | 'ready') => {
+const synth = (phase: 'bootstrap' | 'ready', lambdaConcurrencyMode: 'reserved' | 'shared-unreserved' = 'reserved') => {
   const app = new App({ context: {
     'availability-zones:account=111111111111:region=eu-north-1': ['eu-north-1a', 'eu-north-1b'],
   } });
   Validations.of(app).acknowledge({ id: 'CloudFormation-Validate::W3010', reason: 'Offline tests use fictional cached AZs.' });
   const stack = new PortalStack(app, 'TestPortal', {
-    env, config: { ...env, postgresVersion: '17.6', phase, qualifier: 'portal123', expiresAt: '2030-06-01T18:00:00.000Z',
+    env, config: { ...env, postgresVersion: '17.6', phase, lambdaConcurrencyMode, qualifier: 'portal123', expiresAt: '2030-06-01T18:00:00.000Z',
       ...(phase === 'ready' ? { frontendUrl: 'https://demo.cloudfront.net' } : {}) },
   });
   const template = Template.fromStack(stack);
@@ -150,6 +150,19 @@ describe.each(['bootstrap', 'ready'] as const)('%s API trust boundary', (phase) 
       expect(typeof (await import(pathToFileURL(bundle).href)).handler).toBe('function');
     }
   });
+});
+
+it('omits per-function reservations in shared-unreserved demo mode', () => {
+  const { template } = synth('bootstrap', 'shared-unreserved');
+  const functions = Object.values(template.findResources('AWS::Lambda::Function'))
+    .filter((resource) => /^Appointment portal \w+ API$/.test(resource.Properties.Description ?? ''));
+  expect(functions).toHaveLength(3);
+  for (const fn of functions) expect(fn.Properties).not.toHaveProperty('ReservedConcurrentExecutions');
+  const routes = Object.values(template.findResources('AWS::ApiGatewayV2::Route'));
+  expect(routes).toHaveLength(10);
+  for (const route of routes) expect(route.Properties).toMatchObject({ AuthorizationType: 'JWT', AuthorizationScopes: ['portal/access'] });
+  expect(Object.values(template.findResources('AWS::ApiGatewayV2::Stage'))[0]!.Properties.DefaultRouteSettings)
+    .toEqual({ ThrottlingRateLimit: 2, ThrottlingBurstLimit: 3 });
 });
 
 it('installs an AWS-side one-time application stack deletion safeguard', () => {

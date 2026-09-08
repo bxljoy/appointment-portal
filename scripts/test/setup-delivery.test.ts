@@ -15,7 +15,8 @@ it('persists an ownership-neutral recovery target before bootstrap can fail', as
   const saves: DeploymentManifest[] = [];
   try {
     await writeFile(configPath, JSON.stringify({ account: manifest.account, region: manifest.region, postgresVersion: '17.6', durationHours: 1,
-      maxCostUsd: 5, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), ...expiry, accountsFile: '/unused', priceReport: '/unused' }), { mode: 0o600 });
+      maxCostUsd: 5, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), ...expiry,
+      accountsFile: '/unused', priceReport: '/unused' }), { mode: 0o600 });
     await expect(setupDelivery(configPath, {
       sts: { send: async () => ({ Account: manifest.account }) } as never,
       cloudformation: { send: async () => { throw Object.assign(new Error('stack absent'), { name: 'ValidationError' }); } } as never,
@@ -38,7 +39,8 @@ it('checkpoints toolkit and delivery ownership before output parsing or inventor
   const commands: (readonly string[])[] = [];
   try {
     await writeFile(configPath, JSON.stringify({ account: manifest.account, region: manifest.region, postgresVersion: '17.6', durationHours: 1,
-      maxCostUsd: 5, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), ...expiry, accountsFile: '/unused', priceReport: '/unused' }), { mode: 0o600 });
+      maxCostUsd: 5, lambdaConcurrencyMode: 'shared-unreserved', repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40),
+      ...expiry, accountsFile: '/unused', priceReport: '/unused' }), { mode: 0o600 });
     const cloudformation = { send: vi.fn(async (command: { constructor: { name: string }; input: { StackName?: string } }) => {
       if (command.constructor.name !== 'DescribeStacksCommand') throw new Error('unexpected command');
       const exists = command.input.StackName === TOOLKIT_STACK ? toolkitExists : deliveryExists;
@@ -61,6 +63,7 @@ it('checkpoints toolkit and delivery ownership before output parsing or inventor
       listResources: async () => { throw new Error('inventory must happen after output parsing'); },
     })).rejects.toThrow('output parse failed');
     expect(commands.map((args) => args.includes('bootstrap') ? 'bootstrap' : 'deploy')).toEqual(['bootstrap', 'deploy']);
+    expect(commands.find((args) => args.includes('deploy'))).toContain('lambdaConcurrencyMode=shared-unreserved');
     expect(saves).toHaveLength(5);
     expect(saves[0]!.resources).toEqual([]);
     expect(saves[1]!.resources).toEqual([]);

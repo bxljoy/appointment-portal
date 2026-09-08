@@ -36,7 +36,9 @@ export class PortalStack extends Stack {
     const safeguard = config.expiresAt ? this.addExpirySafeguard(config.expiresAt, config.qualifier) : undefined;
     this.data = new DataConstruct(this, 'Data', { config });
     this.identity = new IdentityConstruct(this, 'Identity', { config });
-    this.api = new ApiConstruct(this, 'Api', { data: this.data, identity: this.identity });
+    this.api = new ApiConstruct(this, 'Api', {
+      data: this.data, identity: this.identity, lambdaConcurrencyMode: config.lambdaConcurrencyMode,
+    });
     this.web = new WebConstruct(this, 'Web', { apiUrl: this.api.apiUrl,
       cognitoDomain: this.identity.domain.baseUrl(), cognitoIssuerOrigin: `https://cognito-idp.${this.region}.${this.urlSuffix}` });
     this.operations = new OperationsConstruct(this, 'Operations', { functions: this.api.functions, httpApi: this.api.httpApi,

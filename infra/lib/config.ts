@@ -1,5 +1,8 @@
 import { z } from 'zod';
 
+const lambdaConcurrencyModeSchema = z.enum(['reserved', 'shared-unreserved']);
+export type LambdaConcurrencyMode = z.infer<typeof lambdaConcurrencyModeSchema>;
+
 const frontendOrigin = z.url().refine((value) => {
   const url = new URL(value);
   return url.protocol === 'https:' && url.origin === value &&
@@ -11,6 +14,7 @@ const portalConfigSchema = z.strictObject({
   region: z.string().regex(/^[a-z]{2}(?:-[a-z]+)+-[1-9]\d*$/),
   postgresVersion: z.string().regex(/^17\.[1-9]\d*$/),
   phase: z.enum(['bootstrap', 'ready']),
+  lambdaConcurrencyMode: lambdaConcurrencyModeSchema.default('reserved'),
   frontendUrl: frontendOrigin.optional(),
   qualifier: z.string().regex(/^[a-z0-9]{1,10}$/),
   expiresAt: z.iso.datetime({ offset: true }).refine((value) => value.endsWith('Z')).optional(),
@@ -18,6 +22,6 @@ const portalConfigSchema = z.strictObject({
   path: ['frontendUrl'], message: 'ready phase requires frontendUrl',
 });
 
-export type PortalConfig = z.infer<typeof portalConfigSchema>;
+export type PortalConfig = z.input<typeof portalConfigSchema>;
 
-export const parsePortalConfig = (input: unknown): PortalConfig => portalConfigSchema.parse(input);
+export const parsePortalConfig = (input: unknown) => portalConfigSchema.parse(input);

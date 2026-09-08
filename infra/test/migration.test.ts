@@ -8,11 +8,11 @@ import type { Asset } from 'aws-cdk-lib/aws-s3-assets';
 import { expect, test } from 'vitest';
 import { PortalStack } from '../lib/portal-stack.js';
 
-const synth = (phase: 'bootstrap' | 'ready') => {
+const synth = (phase: 'bootstrap' | 'ready', lambdaConcurrencyMode: 'reserved' | 'shared-unreserved' = 'reserved') => {
   const env = { account: '111111111111', region: 'eu-north-1' };
   const app = new App({ context: { 'availability-zones:account=111111111111:region=eu-north-1': ['eu-north-1a', 'eu-north-1b'] } });
   Validations.of(app).acknowledge({ id: 'CloudFormation-Validate::W3010', reason: 'Offline tests use fictional cached AZs.' });
-  const stack = new PortalStack(app, 'TestPortal', { env, config: { ...env, qualifier: 'portal123', phase, postgresVersion: '17.6',
+  const stack = new PortalStack(app, 'TestPortal', { env, config: { ...env, qualifier: 'portal123', phase, lambdaConcurrencyMode, postgresVersion: '17.6',
     ...(phase === 'ready' ? { frontendUrl: 'https://demo.cloudfront.net' } : {}) } });
   const template = Template.fromStack(stack);
   expect(app.synth().manifest.missing ?? []).toEqual([]);
@@ -47,6 +47,12 @@ test.each(['bootstrap', 'ready'] as const)('%s isolates the private admin migrat
     LogGroupName: '/appointment-portal/TestPortal/migration', RetentionInDays: 7 }, DeletionPolicy: 'Delete', UpdateReplacePolicy: 'Delete' });
   expect(fn.Properties.Tags).toContainEqual({ Key: 'Project', Value: 'appointment-portal' });
   expect(template.toJSON().Outputs.MigrationFunctionName.Value).toEqual({ Ref: id });
+});
+
+test('omits the migration reservation in shared-unreserved demo mode', () => {
+  const migration = Object.values(synth('bootstrap', 'shared-unreserved').template.findResources('AWS::Lambda::Function'))
+    .find((resource) => resource.Properties.Description === 'Appointment portal private migration and seed');
+  expect(migration?.Properties).not.toHaveProperty('ReservedConcurrentExecutions');
 });
 
 test('bundles the real migration handler, SDK, SQL and verified CA at a stable hash in both phases', async () => {

@@ -11,11 +11,12 @@ import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import { Construct } from 'constructs';
 import type { DataConstruct } from './data-construct.js';
 import type { IdentityConstruct } from './identity-construct.js';
+import type { LambdaConcurrencyMode } from './config.js';
 import { workspaceRoot } from './workspace-path.js';
 
 type Feature = 'profiles' | 'availability' | 'appointments';
 export type FeatureFunctions = Record<Feature, NodejsFunction>;
-type ApiProps = { data: DataConstruct; identity: IdentityConstruct };
+type ApiProps = { data: DataConstruct; identity: IdentityConstruct; lambdaConcurrencyMode: LambdaConcurrencyMode };
 const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 
 export class ApiConstruct extends Construct {
@@ -23,7 +24,7 @@ export class ApiConstruct extends Construct {
   readonly functions: FeatureFunctions;
   readonly apiUrl: string;
 
-  constructor(scope: Construct, id: string, { data, identity }: ApiProps) {
+  constructor(scope: Construct, id: string, { data, identity, lambdaConcurrencyMode }: ApiProps) {
     super(scope, id);
     const logGroup = (name: string) => new LogGroup(this, `${name}Logs`, {
       logGroupName: `/appointment-portal/${Stack.of(this).stackName}/api/${name.toLowerCase()}`,
@@ -36,7 +37,8 @@ export class ApiConstruct extends Construct {
         entry: join(workspaceRoot, `apps/api/src/modules/${feature}/handler.ts`),
         projectRoot: workspaceRoot, depsLockFilePath: join(workspaceRoot, 'pnpm-lock.yaml'),
         runtime: Runtime.NODEJS_24_X, architecture: Architecture.ARM_64,
-        memorySize: 512, timeout: Duration.seconds(15), reservedConcurrentExecutions: 5,
+        memorySize: 512, timeout: Duration.seconds(15),
+        ...(lambdaConcurrencyMode === 'reserved' ? { reservedConcurrentExecutions: 5 } : {}),
         vpc: data.vpc, vpcSubnets: { subnetType: SubnetType.PRIVATE_ISOLATED },
         securityGroups: [data.apiSecurityGroup], logGroup: logGroup(feature), loggingFormat: LoggingFormat.JSON,
         environment: {

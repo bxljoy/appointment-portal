@@ -41,10 +41,14 @@ and region. `ready` requires `frontendUrl`, a public HTTPS origin without a trai
 slash, path, credentials, query, or fragment. The default deployment region in the
 approved design is `eu-north-1`; actual engine support remains a preflight check.
 The test value `17.6` is a fixture, not a claim about current regional availability.
+`lambdaConcurrencyMode` accepts only `reserved` or `shared-unreserved` and defaults
+to `reserved`. Shared mode is limited to a controlled, disposable demo account whose
+regional quota is too small to allocate reserved concurrency.
 
-The CDK entrypoint reads `account`, `region`, `postgresVersion`, `phase`, `qualifier`,
-and optional `frontendUrl` from CDK context. Nothing infers a deployment account or
-silently changes the phase. The synthesizer uses the configured qualifier; the
+The CDK entrypoint reads `account`, `region`, `postgresVersion`, `phase`,
+`lambdaConcurrencyMode`, `qualifier`, and optional `frontendUrl` from CDK context.
+Nothing infers a deployment account or silently changes the phase. The synthesizer
+uses the configured qualifier; the
 corresponding bootstrap stack is separately inventoried and is not created here.
 
 Run `pnpm test infra/test/data.test.ts infra/test/config.test.ts` from the root.
@@ -126,8 +130,11 @@ preserved unless separately verified as project exclusive.
 
 `ApiConstruct` consumes the data and identity constructs and exposes `httpApi`,
 `functions` (profiles, availability, appointments), and the direct origin `apiUrl`.
-Each feature uses Node 24 ARM64, 512 MiB, a 15-second timeout, reserved concurrency
-five, the isolated subnets, and the API security group. Application-secret IAM
+Each feature uses Node 24 ARM64, 512 MiB, a 15-second timeout, the isolated subnets,
+and the API security group. Default `reserved` mode assigns concurrency five to each
+feature and one to the private migration function. Explicit `shared-unreserved` mode
+omits all four reservations so the functions share the account's unreserved pool.
+Application-secret IAM
 access is unchanged between phases. AWS SDK clients are included in the ESM bundles;
 Node built-ins and pg's unused lazy `pg-native` alternative are the only externals.
 The RDS public CA asset and its provenance live in `infra/assets/`.
@@ -140,9 +147,12 @@ All ten approved routes retain the `/api` prefix and explicitly require the Cogn
 issuer, app-client audience, and `portal/access` scope. There is no anonymous
 default route, CORS wildcard, or separate direct-origin authentication path. The
 default stage permits an average two requests/second with a burst of three, reducing
-burst pressure before requests can contend for each feature Lambda's reserved
-concurrency of five. Deployed throttling tests send unauthenticated requests to the
-existing direct-API `GET /api/me` route. The route inherits the stage throttle, while
+burst pressure before requests contend for Lambda concurrency. The throttle,
+authentication, pool limits, routes, and handlers are identical in both modes.
+Shared mode does not provide per-feature isolation: another regional function or a
+slow route can exhaust the pool and throttle unrelated requests. Deployed throttling
+tests send unauthenticated requests to the existing direct-API `GET /api/me` route.
+The route inherits the stage throttle, while
 its managed JWT authorizer rejects requests before Lambda integration; the test accepts
 only 401 and 429. API Gateway documents the token-bucket settings as
 best-effort targets in [HTTP API throttling](https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-throttling.html)

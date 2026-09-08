@@ -10,6 +10,7 @@ const config = parsePortalConfig({
   region: app.node.tryGetContext('region'),
   postgresVersion: app.node.tryGetContext('postgresVersion'),
   phase: app.node.tryGetContext('phase'),
+  lambdaConcurrencyMode: app.node.tryGetContext('lambdaConcurrencyMode'),
   qualifier: app.node.tryGetContext('qualifier'),
   expiresAt: app.node.tryGetContext('expiresAt'),
   frontendUrl: app.node.tryGetContext('frontendUrl'),

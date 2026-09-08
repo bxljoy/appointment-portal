@@ -34,6 +34,7 @@ const configSchema = z.strictObject({
   expiresAt: z.iso.datetime({ offset: true }).refine((value) => value.endsWith('Z')),
   createdAt: z.iso.datetime({ offset: true }).refine((value) => value.endsWith('Z')),
   accountsFile: z.string().min(1), priceReport: z.string().min(1),
+  lambdaConcurrencyMode: z.enum(['reserved', 'shared-unreserved']).default('reserved'),
   oidcProviderArn: z.string().startsWith('arn:aws:iam::').optional(),
 }).superRefine((value, context) => {
   const delta = new Date(value.expiresAt).getTime() - new Date(value.createdAt).getTime();
@@ -41,7 +42,8 @@ const configSchema = z.strictObject({
     context.addIssue({ code: 'custom', path: ['expiresAt'], message: 'Maximum lifetime must not exceed the configured duration or six hours.' });
   }
 });
-export type AwsDemoInput = z.infer<typeof configSchema>;
+export type AwsDemoInput = z.input<typeof configSchema>;
+type ParsedAwsDemoInput = z.output<typeof configSchema>;
 const CONFIG_CLOCK_SKEW_MS = 5 * 60_000;
 
 const priceSchema = z.strictObject({
@@ -72,7 +74,7 @@ const clientsFor = (region: string): AwsClients => ({
   sts: new STSClient({ region }), logs: new CloudWatchLogsClient({ region }), cognito: new CognitoIdentityProviderClient({ region }),
 });
 
-export const parseAwsDemoInput = (raw: unknown, now = new Date()): AwsDemoInput => {
+export const parseAwsDemoInput = (raw: unknown, now = new Date()): ParsedAwsDemoInput => {
   const input = configSchema.parse(raw);
   const current = now.getTime(); const created = new Date(input.createdAt).getTime(); const expires = new Date(input.expiresAt).getTime();
   if (!Number.isFinite(current) || Math.abs(current - created) > CONFIG_CLOCK_SKEW_MS) {
@@ -87,7 +89,7 @@ export const parseAwsDemoInput = (raw: unknown, now = new Date()): AwsDemoInput 
 
 export const readAwsDemoInput = async (path: string, options: {
   now?: Date; requireCurrentCreation?: boolean; requireUnexpired?: boolean;
-} = {}): Promise<AwsDemoInput> => {
+} = {}): Promise<ParsedAwsDemoInput> => {
   const raw = JSON.parse(await readPrivateFile(path));
   if (options.requireCurrentCreation ?? true) return parseAwsDemoInput(raw, options.now);
   const input = configSchema.parse(raw);
@@ -127,7 +129,8 @@ export const makeAwsPreflightProbe = (input: AwsDemoInput, clients: AwsClients =
 
 const contextArgs = (input: AwsDemoInput, phase: 'bootstrap' | 'ready', frontendUrl?: string) => [
   '-c', `account=${input.account}`, '-c', `region=${input.region}`, '-c', `postgresVersion=${input.postgresVersion}`,
-  '-c', `phase=${phase}`, '-c', `qualifier=${QUALIFIER}`, ...(input.sourceCommit ? ['-c', `sourceCommit=${input.sourceCommit}`] : []),
+  '-c', `phase=${phase}`, '-c', `lambdaConcurrencyMode=${input.lambdaConcurrencyMode ?? 'reserved'}`,
+  '-c', `qualifier=${QUALIFIER}`, ...(input.sourceCommit ? ['-c', `sourceCommit=${input.sourceCommit}`] : []),
   ...(frontendUrl ? ['-c', `frontendUrl=${frontendUrl}`] : []),
   '-c', `expiresAt=${input.expiresAt}`,
 ];

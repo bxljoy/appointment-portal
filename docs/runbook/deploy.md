@@ -87,6 +87,7 @@ enter process arguments or environment variables.
   "postgresVersion": "17.6",
   "durationHours": 2,
   "maxCostUsd": 5,
+  "lambdaConcurrencyMode": "reserved",
   "repository": "OWNER/REPOSITORY",
   "branch": "main",
   "sourceCommit": "0123456789abcdef0123456789abcdef01234567",
@@ -134,10 +135,15 @@ pnpm demo:preflight
 
 This read-only check compares STS identity with the configured account; checks the
 PostgreSQL 17 patch and `db.t4g.small`, and confirms that the caller can reach the
-RDS Proxy API in the selected Region; requires Lambda
-headroom for 16 reserved executions while leaving 100 unreserved; reads Node,
-pnpm, and Docker versions; requires a clean worktree; and checks the estimate.
-The quota calculation follows AWS's requirement to retain 100 unreserved executions;
+RDS Proxy API in the selected Region. Default `reserved` mode requires Lambda
+headroom for 16 reserved executions while leaving 100 unreserved. Explicit
+`shared-unreserved` mode requires at least 10 unreserved executions and omits all
+four application reservations; use it only for a dedicated, low-traffic temporary
+demo account. It preserves API routes, authorization, handlers, stage throttling,
+and database pool limits, but loses per-feature and migration capacity isolation.
+Preflight also reads Node, pnpm, and Docker versions, requires a clean worktree, and
+checks the estimate. The reserved-mode quota calculation follows AWS's requirement
+to retain 100 unreserved executions;
 see [Lambda reserved concurrency](https://docs.aws.amazon.com/lambda/latest/dg/configuration-concurrency.html)
 (checked 2026-09-06). Region support and price values are always queried or supplied
 at execution time; this repository does not claim live availability or a fixed cost.
@@ -152,7 +158,10 @@ match. Imported providers are shared.
 DeliveryStack trusts only `repo:OWNER/REPOSITORY:environment:demo` with audience
 `sts.amazonaws.com`. In GitHub, create environment `demo`, restrict its deployment
 branch to the configured branch, and populate the variables/secrets used by
-`demo.yml`, including `AWS_DELIVERY_ROLE_ARN`. The workflow also rejects a different
+`demo.yml`, including `AWS_DELIVERY_ROLE_ARN`. Set environment variable
+`LAMBDA_CONCURRENCY_MODE` to `shared-unreserved` only for the constrained disposable
+account; when absent, the workflow and private configuration default to `reserved`.
+The workflow also rejects a different
 `github.ref_name` before requesting AWS credentials. See [GitHub environments](https://docs.github.com/en/actions/concepts/workflows-and-actions/deployment-environments)
 and [OIDC subject claims](https://docs.github.com/en/actions/reference/security/oidc)
 (checked 2026-09-06).

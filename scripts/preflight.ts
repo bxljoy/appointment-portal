@@ -6,6 +6,7 @@ import { estimateCost, type CostRates } from './deploy.js';
 export type PreflightInput = {
   account: string; region: string; postgresVersion: string;
   durationHours: number; maxCostUsd: number;
+  lambdaConcurrencyMode?: 'reserved' | 'shared-unreserved';
 };
 export type PreflightProbe = {
   identity(): Promise<string>;
@@ -22,11 +23,13 @@ export const toPreflightInput = (input: PreflightInput): PreflightInput => ({
   postgresVersion: input.postgresVersion,
   durationHours: input.durationHours,
   maxCostUsd: input.maxCostUsd,
+  lambdaConcurrencyMode: input.lambdaConcurrencyMode ?? 'reserved',
 });
 
 const inputSchema = z.strictObject({
   account: z.string().regex(/^\d{12}$/), region: z.string().regex(/^[a-z]{2}(?:-[a-z]+)+-[1-9]\d*$/),
   postgresVersion: z.string().regex(/^17\.[1-9]\d*$/), durationHours: z.number().positive().max(6), maxCostUsd: z.number().positive(),
+  lambdaConcurrencyMode: z.enum(['reserved', 'shared-unreserved']).default('reserved'),
 });
 
 export const runPreflight = async (raw: PreflightInput, probe: PreflightProbe) => {
@@ -37,15 +40,21 @@ export const runPreflight = async (raw: PreflightInput, probe: PreflightProbe) =
   if (!regional.postgres || !regional.instanceClass) throw new Error('Requested PostgreSQL engine or db.t4g.small class is unavailable in this region.');
   if (!regional.proxyApiReachable) throw new Error('RDS Proxy API reachability could not be confirmed for this account and region.');
   const unreserved = await probe.unreservedConcurrency(input.region);
-  const reservedConcurrencyRequired = 16;
-  if (unreserved < 100 + reservedConcurrencyRequired) throw new Error('Insufficient Lambda concurrency headroom for 16 reserved executions while retaining 100 unreserved.');
+  const reservedConcurrencyRequired = input.lambdaConcurrencyMode === 'reserved' ? 16 : 0;
+  const minimumUnreservedConcurrency = input.lambdaConcurrencyMode === 'reserved' ? 116 : 10;
+  if (unreserved < minimumUnreservedConcurrency) {
+    throw new Error(input.lambdaConcurrencyMode === 'reserved'
+      ? 'Insufficient Lambda concurrency headroom for 16 reserved executions while retaining 100 unreserved.'
+      : 'Insufficient Lambda concurrency for ten shared executions in shared-unreserved demo mode.');
+  }
   const versions = await probe.runtimeVersions();
   if (!versions.node.startsWith('24.') || versions.pnpm !== '11.22.0' || !/^\d+\./.test(versions.docker)) throw new Error('Node 24, pnpm 11.22.0, and Docker are required.');
   if (!await probe.gitClean()) throw new Error('Git worktree must be clean before deployment.');
   const rates = await probe.costRates({ region: input.region, postgresVersion: input.postgresVersion });
   const cost = estimateCost({ durationHours: input.durationHours, capUsd: input.maxCostUsd, rates });
   if (!cost.allowed) throw new Error(`Estimated temporary deployment cost ${cost.totalUsd.toFixed(2)} USD exceeds the supplied cap.`);
-  return { account, region: input.region, versions, regional, unreservedConcurrency: unreserved, reservedConcurrencyRequired, cost };
+  return { account, region: input.region, versions, regional, unreservedConcurrency: unreserved,
+    lambdaConcurrencyMode: input.lambdaConcurrencyMode, minimumUnreservedConcurrency, reservedConcurrencyRequired, cost };
 };
 
 export type ProcessResult = { stdout: string; stderr: string };

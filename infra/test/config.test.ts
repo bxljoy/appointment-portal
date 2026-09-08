@@ -10,9 +10,12 @@ const valid = {
 
 describe('deployment configuration', () => {
   it('accepts concrete bootstrap and ready configurations', () => {
-    expect(parsePortalConfig(valid)).toEqual(valid);
+    expect(parsePortalConfig(valid)).toEqual({ ...valid, lambdaConcurrencyMode: 'reserved' });
     const ready = { ...valid, phase: 'ready', frontendUrl: 'https://demo.cloudfront.net' };
-    expect(parsePortalConfig(ready)).toEqual(ready);
+    expect(parsePortalConfig(ready)).toEqual({ ...ready, lambdaConcurrencyMode: 'reserved' });
+    expect(parsePortalConfig({ ...valid, lambdaConcurrencyMode: 'shared-unreserved' })).toEqual({
+      ...valid, lambdaConcurrencyMode: 'shared-unreserved',
+    });
   });
 
   it('rejects uppercase qualifiers that would create an invalid bootstrap S3 bucket name', () => {
@@ -26,6 +29,7 @@ describe('deployment configuration', () => {
     ...['', 'eu-north', 'EU-NORTH-1', '${AWS::Region}', 'eu-north-1 '].map((region) => ({ ...valid, region })),
     ...['17', '16.6', '18.1', '17.0', '17.x', '17.06', '17.6.1', 17.6].map((postgresVersion) => ({ ...valid, postgresVersion })),
     ...['', 'production', 'READY'].map((phase) => ({ ...valid, phase })),
+    ...['', 'unreserved', 'shared', 'RESERVED', true, 10].map((lambdaConcurrencyMode) => ({ ...valid, lambdaConcurrencyMode })),
     ...['', 'with-dash', '12345678901', '${Token}', 123].map((qualifier) => ({ ...valid, qualifier })),
     { ...valid, phase: 'ready' },
     ...[undefined, '', 'http://demo.cloudfront.net', { Ref: 'Distribution' },

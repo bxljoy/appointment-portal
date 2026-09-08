@@ -15,6 +15,7 @@ const fullInput = {
   postgresVersion: '17.6',
   durationHours: 1,
   maxCostUsd: 5,
+  lambdaConcurrencyMode: 'shared-unreserved' as const,
   repository: 'OWNER/REPOSITORY',
   branch: 'main',
   sourceCommit: 'a'.repeat(40),
@@ -23,7 +24,7 @@ const fullInput = {
   accountsFile: '/private/credentials/accounts.json',
   priceReport: '/private/prices.json',
 };
-const preflightKeys = ['account', 'durationHours', 'maxCostUsd', 'postgresVersion', 'region'];
+const preflightKeys = ['account', 'durationHours', 'lambdaConcurrencyMode', 'maxCostUsd', 'postgresVersion', 'region'];
 const unusedProbe = {} as PreflightProbe;
 
 it('streams subprocess bytes to a private output file without UTF-8 conversion', async () => {

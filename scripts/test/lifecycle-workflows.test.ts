@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 type Workflow = { on: { workflow_dispatch: unknown }; permissions: Record<string, string>;
   concurrency: Record<string, unknown>; jobs: Record<string, { environment: string; 'timeout-minutes': number;
+    env?: Record<string, string>;
     steps: { id?: string; name?: string; if?: string; run?: string; uses?: string; with?: { path?: string; ref?: string; 'persist-credentials'?: boolean } }[] }> };
 const workflow = async (name: string) => parse(await readFile(new URL(`../../.github/workflows/${name}.yml`, import.meta.url), 'utf8')) as Workflow;
 
@@ -30,6 +31,12 @@ describe('manual disposable environment workflows', () => {
     expect(text).not.toMatch(/AWS_(?:ACCESS_KEY_ID|SECRET_ACCESS_KEY|SESSION_TOKEN)/);
     expect(text).toContain('pnpm demo:diagnostics');
     expect(text).toContain('.runtime/diagnostics.json');
+  });
+
+  it('takes a validated Lambda concurrency mode from the demo environment with the reserved default', async () => {
+    const value = await workflow('demo');
+    expect(value.jobs['deploy-and-verify']!.env?.LAMBDA_CONCURRENCY_MODE)
+      .toBe("${{ vars.LAMBDA_CONCURRENCY_MODE || 'reserved' }}");
   });
 
   it('installs the browser before tests and deployment', async () => {

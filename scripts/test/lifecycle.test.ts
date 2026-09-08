@@ -92,6 +92,24 @@ describe('disposable deployment lifecycle', () => {
     })).rejects.toThrow(/concurrency/i);
   });
 
+  it('requires ten shared executions for the explicitly unreserved demo mode', async () => {
+    const probe = (unreserved: number) => ({
+      identity: async () => manifest.account,
+      regionalCapabilities: async () => ({ postgres: true, instanceClass: true, proxyApiReachable: true }),
+      unreservedConcurrency: async () => unreserved,
+      runtimeVersions: async () => ({ node: '24.0.1', pnpm: '11.22.0', docker: '28.0.0' }),
+      gitClean: async () => true,
+      costRates: async () => ({ databaseHourly: 0, proxyVcpuHourly: 0, databaseVcpus: 2, interfaceEndpointAzHourly: 0, azCount: 2,
+        cognito: 0, logging: 0, storage: 0, transfer: 0 }),
+    });
+    const input = { account: manifest.account, region: manifest.region, postgresVersion: '17.6', durationHours: 2,
+      maxCostUsd: 3, lambdaConcurrencyMode: 'shared-unreserved' as const };
+    await expect(runPreflight(input, probe(9))).rejects.toThrow(/ten shared executions/i);
+    await expect(runPreflight(input, probe(10))).resolves.toMatchObject({
+      lambdaConcurrencyMode: 'shared-unreserved', reservedConcurrencyRequired: 0, minimumUnreservedConcurrency: 10,
+    });
+  });
+
   it('passes only the preflight input contract from the full AWS demo configuration', async () => {
     const root = await mkdtemp(join(await realpath(tmpdir()), 'portal-adapter-preflight-'));
     const priceReport = join(root, 'prices.json');
@@ -412,7 +430,7 @@ describe('disposable deployment lifecycle', () => {
     } finally { vi.unstubAllEnvs(); await rm(root, { recursive: true, force: true }); }
   });
 
-  it('passes the deployment phase as an explicit CloudFormation parameter on every application deploy', async () => {
+  it('passes the deployment phase and concurrency mode on every application deploy', async () => {
     const commands: (readonly string[])[] = [];
     const clients = fakeAwsClients({ DescribeStacksCommand: [
       { Stacks: [{ Tags: [{ Key: 'Project', Value: manifest.projectTag }, { Key: 'SourceCommit', Value: 'a'.repeat(40) }],
@@ -421,7 +439,8 @@ describe('disposable deployment lifecycle', () => {
         Parameters: [{ ParameterKey: 'DeploymentPhase', ParameterValue: 'ready' }] }] },
     ] });
     const runtime = makeAwsDemoDependencies({ account: manifest.account, region: manifest.region, postgresVersion: '17.6', durationHours: 1,
-      maxCostUsd: 1, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), ...expiry, accountsFile: '/unused', priceReport: '/unused' }, clients,
+      maxCostUsd: 1, lambdaConcurrencyMode: 'shared-unreserved', repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40),
+      ...expiry, accountsFile: '/unused', priceReport: '/unused' }, clients,
     async (_executable, args) => { commands.push(args); throw new Error('stop after command capture'); });
     await expect(runtime.deploy('bootstrap')).rejects.toThrow('stop after command capture');
     await expect(runtime.deploy('ready', manifest.outputs.FrontendUrl)).rejects.toThrow('stop after command capture');
@@ -430,6 +449,7 @@ describe('disposable deployment lifecycle', () => {
     for (const [index, phase] of ['bootstrap', 'ready'].entries()) {
       const parameter = deploys[index]!.indexOf('--parameters');
       expect(deploys[index]!.slice(parameter, parameter + 2)).toEqual(['--parameters', `${manifest.appStack}:DeploymentPhase=${phase}`]);
+      expect(deploys[index]).toContain('lambdaConcurrencyMode=shared-unreserved');
     }
   });
 
