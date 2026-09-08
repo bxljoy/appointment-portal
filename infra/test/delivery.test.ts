@@ -34,6 +34,13 @@ describe('GitHub OIDC delivery identity', () => {
     template.resourceCountIs('AWS::IAM::OIDCProvider', 0);
   });
 
+  it('deletes its owned OIDC provider with the delivery stack', () => {
+    const providers = Object.values(synth().findResources('AWS::IAM::OIDCProvider'));
+    expect(providers).toHaveLength(1);
+    expect(providers[0]).not.toHaveProperty('DeletionPolicy');
+    expect(providers[0]).not.toHaveProperty('UpdateReplacePolicy');
+  });
+
   it('limits PassRole to project bootstrap roles and AWS service principals', () => {
     const json = JSON.stringify(synth().toJSON());
     expect(json).toContain(':iam::111111111111:role/cdk-apptdemo-');

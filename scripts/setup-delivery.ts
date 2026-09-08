@@ -115,8 +115,10 @@ export const setupDelivery = async (configPath: string, dependencies: SetupDeliv
   }
   await requireOwnedStack(cloudformation, TOOLKIT_STACK);
   await checkpoint({ type: 'Bootstrap::AWS::CloudFormation::Stack', id: TOOLKIT_STACK, owned: true });
-  await refuseUnownedStack(cloudformation, DELIVERY_STACK);
-  const oidcProviderArn = await findGitHubProvider(iam);
+  const delivery = await stack(cloudformation, DELIVERY_STACK);
+  if (delivery && !owned(delivery)) throw new Error(`Refusing to adopt unowned stack ${DELIVERY_STACK}.`);
+  const liveDeliveryResources = delivery ? await listResources(cloudformation, DELIVERY_STACK, 'Delivery::') : [];
+  const oidcProviderArn = await resolveGitHubProviderContext(liveDeliveryResources, iam);
   const outputPath = resolve('.runtime/delivery-outputs.json');
   await writeResult(outputPath, {});
   await runner('pnpm', ['--filter', '@portal/infra', 'exec', 'cdk', 'deploy', DELIVERY_STACK, '--exclusively', '--require-approval', 'never',
@@ -135,7 +137,7 @@ export const setupDelivery = async (configPath: string, dependencies: SetupDeliv
   const result = { roleArn, ...(oidcProviderArn ? { oidcProviderArn } : {}) };
   await writeResult(resolve('.runtime/delivery.json'), result);
   const resources = deduplicateResources([
-    ...recovery.resources,
+    ...recovery.resources.filter((resource) => !/(?:^|::)AWS::IAM::OIDCProvider$/.test(resource.type)),
     ...await listResources(cloudformation, TOOLKIT_STACK, 'Bootstrap::'),
     ...await listResources(cloudformation, DELIVERY_STACK, 'Delivery::'),
     ...(oidcProviderArn ? [{ type: 'AWS::IAM::OIDCProvider', id: 'token.actions.githubusercontent.com', arn: oidcProviderArn, owned: false }] : []),
@@ -144,10 +146,27 @@ export const setupDelivery = async (configPath: string, dependencies: SetupDeliv
   return result;
 };
 
+export const resolveGitHubProviderContext = async (deliveryResources: ResourceRecord[], iam: Pick<IAMClient, 'send'>): Promise<string | undefined> => {
+  const ownedProviders = deliveryResources.filter((resource) => resource.type === 'Delivery::AWS::IAM::OIDCProvider');
+  if (ownedProviders.length > 1 || ownedProviders.some((resource) => !resource.owned)) {
+    throw new Error('Live DeliveryStack OIDC provider ownership is inconsistent.');
+  }
+  const discovered = await findGitHubProvider(iam);
+  const ownedProvider = ownedProviders[0];
+  if (!ownedProvider) return discovered;
+  if (discovered === undefined) throw new Error('Live DeliveryStack OIDC provider ownership is inconsistent with missing IAM discovery.');
+  if (discovered !== ownedProvider.id && discovered !== ownedProvider.arn) {
+    throw new Error('Live DeliveryStack OIDC provider does not match IAM discovery.');
+  }
+  return undefined;
+};
+
 const findGitHubProvider = async (iam: Pick<IAMClient, 'send'>): Promise<string | undefined> => {
   for (const provider of (await iam.send(new ListOpenIDConnectProvidersCommand({}))).OpenIDConnectProviderList ?? []) {
     if (!provider.Arn) continue;
-    const details = await iam.send(new GetOpenIDConnectProviderCommand({ OpenIDConnectProviderArn: provider.Arn }));
+    let details;
+    try { details = await iam.send(new GetOpenIDConnectProviderCommand({ OpenIDConnectProviderArn: provider.Arn })); }
+    catch (error) { if (hasName(error, 'NoSuchEntity') || hasName(error, 'NoSuchEntityException')) continue; throw error; }
     if (details.Url === 'token.actions.githubusercontent.com') {
       if (!details.ClientIDList?.includes('sts.amazonaws.com')) throw new Error('Existing GitHub OIDC provider lacks the AWS STS audience.');
       return provider.Arn;
@@ -160,9 +179,9 @@ const stack = async (client: Pick<CloudFormationClient, 'send'>, name: string) =
   try { return (await client.send(new DescribeStacksCommand({ StackName: name }))).Stacks?.[0]; }
   catch (error) { if (typeof error === 'object' && error !== null && 'name' in error && error.name === 'ValidationError') return undefined; throw error; }
 };
+const hasName = (error: unknown, name: string) => typeof error === 'object' && error !== null && 'name' in error && error.name === name;
 const owned = (value: Awaited<ReturnType<typeof stack>>) => value?.Tags?.some((tag) => tag.Key === 'Project' && tag.Value === PROJECT_TAG) ?? false;
 const requireOwnedStack = async (client: Pick<CloudFormationClient, 'send'>, name: string) => { const value = await stack(client, name); if (!value || !owned(value)) throw new Error(`${name} must exist with established project ownership.`); };
-const refuseUnownedStack = async (client: Pick<CloudFormationClient, 'send'>, name: string) => { const value = await stack(client, name); if (value && !owned(value)) throw new Error(`Refusing to adopt unowned stack ${name}.`); };
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {

@@ -31,9 +31,13 @@ export class DeliveryStack extends Stack {
       synthesizer: new DefaultStackSynthesizer({ qualifier: config.qualifier }) });
     Tags.of(this).add('Project', config.projectTag);
 
-    const providerArn = config.oidcProviderArn ?? new iam.CfnOIDCProvider(this, 'GitHubProvider', {
-      url: 'https://token.actions.githubusercontent.com', clientIdList: ['sts.amazonaws.com'],
-    }).attrArn;
+    let providerArn = config.oidcProviderArn;
+    if (!providerArn) {
+      const provider = new iam.CfnOIDCProvider(this, 'GitHubProvider', {
+        url: 'https://token.actions.githubusercontent.com', clientIdList: ['sts.amazonaws.com'],
+      });
+      providerArn = provider.attrArn;
+    }
     const principal = new iam.FederatedPrincipal(providerArn, {
       StringEquals: {
         'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com',

@@ -75,5 +75,6 @@ Restored `owned:true` records are hints only. Each direct delete requires curren
 `Project=appointment-portal` tags or fresh membership in a currently owned exact
 CloudFormation stack. S3 versions are enumerated only from a live bucket whose current
 `Project` tag verifies ownership.
-The GitHub OIDC provider remains shared and non-deletable even under `--all`.
+An imported, shared GitHub OIDC provider remains non-deletable even under `--all`.
+A provider created and owned by `DeliveryStack` is deleted with that stack.
 Unverified prefix-matching leftovers are reported for manual investigation.

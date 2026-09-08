@@ -2,12 +2,47 @@ import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
-import { setupDelivery, verifyGitHubRepositoryIdentity } from '../setup-delivery.js';
+import { resolveGitHubProviderContext, setupDelivery, verifyGitHubRepositoryIdentity } from '../setup-delivery.js';
 import { APP_STACK, DELIVERY_STACK, TOOLKIT_STACK, type DeploymentManifest } from '../lifecycle-types.js';
 import { manifest } from './fakes.js';
 
 const preparedAt = new Date();
 const expiry = { createdAt: preparedAt.toISOString(), expiresAt: new Date(preparedAt.getTime() + 60 * 60_000).toISOString() };
+const providerArn = `arn:aws:iam::${manifest.account}:oidc-provider/token.actions.githubusercontent.com`;
+
+const providerIam = (mode: 'present' | 'missing') => ({ send: vi.fn(async (command: { constructor: { name: string } }) => {
+  if (command.constructor.name === 'ListOpenIDConnectProvidersCommand') {
+    return { OpenIDConnectProviderList: [{ Arn: providerArn }] };
+  }
+  if (mode === 'missing') throw Object.assign(new Error('provider disappeared'), { name: 'NoSuchEntityException' });
+  return { Url: 'token.actions.githubusercontent.com', ClientIDList: ['sts.amazonaws.com'] };
+}) });
+
+it('retains a provider owned by the live DeliveryStack instead of importing it', async () => {
+  await expect(resolveGitHubProviderContext([
+    { type: 'Delivery::AWS::IAM::OIDCProvider', id: providerArn, owned: true },
+  ], providerIam('present') as never)).resolves.toBeUndefined();
+});
+
+it('imports a discovered external provider that is absent from the live DeliveryStack inventory', async () => {
+  await expect(resolveGitHubProviderContext([], providerIam('present') as never)).resolves.toBe(providerArn);
+});
+
+it('recreates a missing provider only when neither DeliveryStack inventory nor IAM claims it', async () => {
+  await expect(resolveGitHubProviderContext([], providerIam('missing') as never)).resolves.toBeUndefined();
+});
+
+it('fails closed when DeliveryStack claims a provider that is missing from IAM', async () => {
+  await expect(resolveGitHubProviderContext([
+    { type: 'Delivery::AWS::IAM::OIDCProvider', id: providerArn, owned: true },
+  ], providerIam('missing') as never)).rejects.toThrow(/inconsistent|missing/i);
+});
+
+it('fails closed when live DeliveryStack ownership and IAM discovery disagree', async () => {
+  await expect(resolveGitHubProviderContext([
+    { type: 'Delivery::AWS::IAM::OIDCProvider', id: `${providerArn}-different`, owned: true },
+  ], providerIam('present') as never)).rejects.toThrow(/does not match/i);
+});
 
 it('verifies the selected numeric repository identity and exact immutable OIDC subject prefix through gh api', async () => {
   const calls: string[][] = [];
@@ -243,6 +278,46 @@ it('adopts immutable repository identity and a new commit for a legacy delivery-
     })).rejects.toThrow('stop after safe legacy adoption');
     expect(saves[0]).toMatchObject({ sourceCommit: 'a'.repeat(40), expiresAt: expiry.expiresAt, repository: 'OWNER/REPOSITORY',
       repositoryOwnerId: '18458919', repositoryId: '1360681625', branch: 'main' });
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+it('reruns an owned DeliveryStack provider without importing it and replaces stale shared ownership records', async () => {
+  const root = await mkdtemp(join(await realpath(tmpdir()), 'portal-setup-owned-provider-'));
+  const configPath = join(root, 'config.json');
+  const saves: DeploymentManifest[] = [];
+  const commands: string[][] = [];
+  const prior: DeploymentManifest = {
+    ...manifest, phase: 'bootstrap', outputs: {}, resources: [
+      { type: 'Bootstrap::AWS::CloudFormation::Stack', id: TOOLKIT_STACK, owned: true },
+      { type: 'Delivery::AWS::CloudFormation::Stack', id: DELIVERY_STACK, owned: true },
+      { type: 'AWS::IAM::OIDCProvider', id: providerArn, owned: false },
+    ],
+  };
+  try {
+    await writeFile(configPath, JSON.stringify({ account: manifest.account, region: manifest.region, postgresVersion: '17.6', durationHours: 1,
+      maxCostUsd: 5, repository: manifest.repository, repositoryOwnerId: manifest.repositoryOwnerId, repositoryId: manifest.repositoryId,
+      branch: manifest.branch, sourceCommit: manifest.sourceCommit, ...expiry, accountsFile: '/unused', priceReport: '/unused' }), { mode: 0o600 });
+    const result = await setupDelivery(configPath, {
+      sts: { send: async () => ({ Account: manifest.account }) } as never,
+      cloudformation: { send: async (command: { input: { StackName: string } }) => {
+        if (command.input.StackName === APP_STACK) throw Object.assign(new Error('stack absent'), { name: 'ValidationError' });
+        return { Stacks: [{ Tags: [{ Key: 'Project', Value: manifest.projectTag }] }] };
+      } } as never,
+      iam: providerIam('present') as never,
+      runner: async (_executable, args) => { commands.push([...args]); return { stdout: '', stderr: '' }; },
+      preflight: async () => {}, verifyGitHubIdentity: async () => {}, loadManifest: async () => prior,
+      saveManifest: async (value) => { saves.push(structuredClone(value)); }, writeResult: async () => {},
+      readOutputs: async () => ({ [DELIVERY_STACK]: { DeliveryRoleArn: `arn:aws:iam::${manifest.account}:role/delivery` } }),
+      listResources: async (_client, name) => name === DELIVERY_STACK
+        ? [{ type: 'Delivery::AWS::IAM::OIDCProvider', id: providerArn, owned: true }]
+        : [{ type: 'Bootstrap::AWS::CloudFormation::Stack', id: TOOLKIT_STACK, owned: true }],
+    });
+    expect(result.roleArn).toBe(`arn:aws:iam::${manifest.account}:role/delivery`);
+    const deploy = commands.find((args) => args.includes('deploy'))!;
+    expect(deploy.some((arg) => arg.startsWith('oidcProviderArn='))).toBe(false);
+    expect(saves.at(-1)?.resources.filter((resource) => /OIDCProvider$/.test(resource.type))).toEqual([
+      { type: 'Delivery::AWS::IAM::OIDCProvider', id: providerArn, owned: true },
+    ]);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 

@@ -28,6 +28,9 @@ Delivery setup confirms both numeric IDs and the exact `sub_claim_prefix` throug
 authenticated GitHub API reads before mutation. A bootstrap-only legacy manifest may
 adopt that identity only after CloudFormation confirms that no application stack exists;
 the same absence check applies before setup creates a fresh identity-bound manifest.
+Setup keeps a provider created by the delivery stack stack-managed on reruns. An
+external provider is recorded as shared; current live inventory replaces stale
+provider records so cleanup ownership and final stack deletion stay explicit.
 Deployment assumes only `apptdemo` bootstrap roles. CloudFormation's execution role
 owns template provisioning authority; runtime roles remain feature-scoped.
 
