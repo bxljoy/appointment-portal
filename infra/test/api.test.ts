@@ -168,9 +168,11 @@ it('omits per-function reservations in shared-unreserved demo mode', () => {
 it('installs an AWS-side one-time application stack deletion safeguard', () => {
   const { template } = synth('bootstrap');
   template.hasResourceProperties('AWS::Scheduler::Schedule', {
-    ActionAfterCompletion: 'DELETE', ScheduleExpression: 'at(2030-06-01T18:00:00)', ScheduleExpressionTimezone: 'UTC',
+    ScheduleExpression: 'at(2030-06-01T18:00:00)', ScheduleExpressionTimezone: 'UTC',
     FlexibleTimeWindow: { Mode: 'OFF' },
   });
+  const schedule = Object.values(template.findResources('AWS::Scheduler::Schedule'))[0]!;
+  expect(schedule.Properties).not.toHaveProperty('ActionAfterCompletion');
   const json = JSON.stringify(template.toJSON());
   expect(json).toContain('arn:aws:scheduler:::aws-sdk:cloudformation:deleteStack');
   expect(json).toContain('AppointmentPortal');

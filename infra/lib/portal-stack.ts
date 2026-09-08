@@ -30,8 +30,6 @@ export class PortalStack extends Stack {
     new CfnParameter(this, 'DeploymentPhase', { type: 'String', allowedValues: ['bootstrap', 'ready'], default: config.phase });
     Validations.of(this).acknowledge({ id: 'CloudFormation-Validate::W2001',
       reason: 'Lifecycle reconciliation reads this stack parameter through DescribeStacks; template resources intentionally do not reference it.' });
-    if (config.expiresAt) Validations.of(this).acknowledge({ id: 'CloudFormation-Validate::F3002',
-      reason: 'The current CloudFormation specification supports Scheduler ActionAfterCompletion; the validation schema bundled with this pinned CDK release lags that property.' });
     if (props.sourceCommit) Tags.of(this).add('SourceCommit', zCommit(props.sourceCommit));
     const safeguard = config.expiresAt ? this.addExpirySafeguard(config.expiresAt, config.qualifier) : undefined;
     this.data = new DataConstruct(this, 'Data', { config });
@@ -75,10 +73,6 @@ export class PortalStack extends Stack {
         roleArn: `arn:${this.partition}:iam::${this.account}:role/appointment-portal-expiry-${qualifier}`,
         input: JSON.stringify({ StackName: this.stackName }) },
     });
-    // CloudFormation supports ActionAfterCompletion although this pinned CDK L1
-    // has not yet exposed it in CfnScheduleProps:
-    // https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-scheduler-schedule.html
-    schedule.addPropertyOverride('ActionAfterCompletion', 'DELETE');
     return schedule;
   }
 }

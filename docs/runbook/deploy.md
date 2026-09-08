@@ -268,6 +268,6 @@ uses an absolute UTC `ExpiresAt` computed from the configured
 duration, capped at six hours, and persisted in the private configuration, manifest,
 and stack outputs. The schedule targets CloudFormation `DeleteStack` for
 `AppointmentPortal` through a role limited to that stack, uses a zero-width flexible
-window, and deletes itself after invocation. Manual stack cleanup removes the schedule.
+window, and is deleted with the application stack it targets. Manual stack cleanup removes the schedule.
 This safeguard removes primary application resources after runner loss; it does not
 remove retained residuals, the delivery stack, CDK toolkit, or shared resources.
