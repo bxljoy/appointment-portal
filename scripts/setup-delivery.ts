@@ -62,7 +62,10 @@ export const setupDelivery = async (configPath: string, dependencies: SetupDeliv
     recovery = { ...recovery, resources: recovery.resources.filter((resource) => !resource.type.startsWith('Bootstrap::')) };
     await saveManifest(recovery);
     await runner('pnpm', ['--filter', '@portal/infra', 'exec', 'cdk', 'bootstrap', `aws://${config.account}/${config.region}`,
-      '--stack-name', TOOLKIT_STACK, '--qualifier', QUALIFIER, '--tags', `Project=${PROJECT_TAG}`]);
+      '--toolkit-stack-name', TOOLKIT_STACK, '--qualifier', QUALIFIER, '--tags', `Project=${PROJECT_TAG}`,
+      '-c', `account=${config.account}`, '-c', `region=${config.region}`, '-c', `postgresVersion=${config.postgresVersion}`,
+      '-c', 'phase=bootstrap', '-c', `lambdaConcurrencyMode=${config.lambdaConcurrencyMode}`,
+      '-c', `qualifier=${QUALIFIER}`, '-c', `expiresAt=${config.expiresAt}`]);
     await saveManifest(recovery);
   }
   await requireOwnedStack(cloudformation, TOOLKIT_STACK);

@@ -63,6 +63,15 @@ it('checkpoints toolkit and delivery ownership before output parsing or inventor
       listResources: async () => { throw new Error('inventory must happen after output parsing'); },
     })).rejects.toThrow('output parse failed');
     expect(commands.map((args) => args.includes('bootstrap') ? 'bootstrap' : 'deploy')).toEqual(['bootstrap', 'deploy']);
+    const bootstrap = commands.find((args) => args.includes('bootstrap'))!;
+    const toolkitStackName = bootstrap.indexOf('--toolkit-stack-name');
+    expect(bootstrap.slice(toolkitStackName, toolkitStackName + 2)).toEqual(['--toolkit-stack-name', TOOLKIT_STACK]);
+    expect(bootstrap).not.toContain('--stack-name');
+    const contexts = bootstrap.flatMap((arg, index) => arg === '-c' ? [bootstrap[index + 1]!] : []);
+    expect(contexts).toEqual([`account=${manifest.account}`, `region=${manifest.region}`, 'postgresVersion=17.6', 'phase=bootstrap',
+      'lambdaConcurrencyMode=shared-unreserved', `qualifier=${manifest.qualifier}`, `expiresAt=${expiry.expiresAt}`]);
+    expect(bootstrap.some((arg) => /^repository=|^branch=|^sourceCommit=/.test(arg))).toBe(false);
+    expect(JSON.stringify(bootstrap)).not.toMatch(/password|secret(?:access)?key|sessiontoken|@example\./i);
     expect(commands.find((args) => args.includes('deploy'))).toContain('lambdaConcurrencyMode=shared-unreserved');
     expect(saves).toHaveLength(5);
     expect(saves[0]!.resources).toEqual([]);
