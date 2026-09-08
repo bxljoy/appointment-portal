@@ -2,7 +2,9 @@ import { readFile } from 'node:fs/promises';
 import { parseDocument } from 'yaml';
 import { describe, expect, it } from 'vitest';
 
-type Workflow = { on: Record<string, unknown>; permissions: unknown; jobs: Record<string, { permissions?: unknown; services?: Record<string, { image: string }>; steps: { uses?: string; run?: string; with?: Record<string, unknown>; 'continue-on-error'?: boolean }[] }> };
+type Workflow = { on: Record<string, unknown>; permissions: unknown; jobs: Record<string, { permissions?: unknown;
+  services?: Record<string, { image: string; options?: string }>;
+  steps: { uses?: string; run?: string; with?: Record<string, unknown>; 'continue-on-error'?: boolean }[] }> };
 function validate(text: string) {
   const parsed = parseDocument(text, { uniqueKeys: true });
   if (parsed.errors.length) throw new Error('Invalid workflow YAML.');
@@ -13,6 +15,9 @@ function validate(text: string) {
   const job = workflow.jobs.quality!;
   expect(job.permissions).toBeUndefined();
   expect(job.services?.postgres?.image ?? '').toMatch(/^postgres:17\./);
+  expect(job.services?.postgres?.options?.trim().split(/\s+/)).toEqual([
+    '--health-cmd', 'pg_isready', '--health-interval', '2s', '--health-timeout', '3s', '--health-retries', '20',
+  ]);
   for (const step of job.steps) { if (step.uses) expect(step.uses).toMatch(/^[\w-]+\/[\w-]+@[a-f0-9]{40}$/); expect(step['continue-on-error']).toBeUndefined(); }
   expect(job.steps.find((step) => step.uses?.startsWith('actions/checkout@'))?.with?.['persist-credentials']).toBe(false);
   expect(job.steps.find((step) => step.uses?.startsWith('actions/setup-node@'))?.with?.['node-version-file']).toBe('.nvmrc');
