@@ -69,7 +69,8 @@ export const setupDelivery = async (configPath: string, dependencies: SetupDeliv
   await (dependencies.preflight ?? (async (input) => {
     await (dependencies.runPreflight ?? runPreflight)(toPreflightInput(input), (dependencies.makePreflightProbe ?? makeAwsPreflightProbe)(input));
   }))(config);
-  await (dependencies.verifyGitHubIdentity ?? ((identity) => verifyGitHubRepositoryIdentity(identity, runner)))(config);
+  const repositoryIdentity = { repository: config.repository, repositoryOwnerId: config.repositoryOwnerId, repositoryId: config.repositoryId };
+  await (dependencies.verifyGitHubIdentity ?? ((identity) => verifyGitHubRepositoryIdentity(identity, runner)))(repositoryIdentity);
   const prior = await loadManifest();
   const deliveryOnly = prior?.phase === 'bootstrap' && Object.keys(prior.outputs).length === 0 && prior.resources.every((resource) =>
     resource.type.startsWith('Bootstrap::') || resource.type.startsWith('Delivery::') || resource.type === 'AWS::IAM::OIDCProvider');

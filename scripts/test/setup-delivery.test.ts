@@ -58,6 +58,32 @@ it('stops before manifest or AWS mutation when GitHub identity verification fail
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+it('projects the full setup configuration into the strict default GitHub identity verifier', async () => {
+  const root = await mkdtemp(join(await realpath(tmpdir()), 'portal-setup-github-projection-'));
+  const configPath = join(root, 'config.json');
+  const runner = vi.fn(async (_executable: string, args: readonly string[]) => ({ stdout: JSON.stringify(
+    args[1] === 'repos/OWNER/REPOSITORY'
+      ? { full_name: 'OWNER/REPOSITORY', id: 1360681625, owner: { id: 18458919 } }
+      : { use_default: true, use_immutable_subject: false, sub_claim_prefix: 'repo:OWNER@18458919/REPOSITORY@1360681625' },
+  ), stderr: '' }));
+  try {
+    await writeFile(configPath, JSON.stringify({ account: manifest.account, region: manifest.region, postgresVersion: '17.6', durationHours: 1,
+      maxCostUsd: 5, repository: 'OWNER/REPOSITORY', repositoryOwnerId: '18458919', repositoryId: '1360681625', branch: 'main',
+      sourceCommit: 'a'.repeat(40), ...expiry, accountsFile: '/unused', priceReport: '/unused' }), { mode: 0o600 });
+    await expect(setupDelivery(configPath, {
+      sts: { send: async () => ({ Account: manifest.account }) } as never,
+      cloudformation: { send: async () => { throw new Error('must not reach AWS stack inspection'); } } as never,
+      iam: { send: async () => { throw new Error('must not reach IAM inspection'); } } as never,
+      runner, preflight: async () => {}, loadManifest: async () => { throw new Error('identity projection passed'); },
+      saveManifest: async () => {}, writeResult: async () => {},
+    })).rejects.toThrow('identity projection passed');
+    expect(runner.mock.calls.map(([, args]) => args)).toEqual([
+      ['api', 'repos/OWNER/REPOSITORY'],
+      ['api', 'repos/OWNER/REPOSITORY/actions/oidc/customization/sub'],
+    ]);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 it('persists an ownership-neutral recovery target before bootstrap can fail', async () => {
   const root = await mkdtemp(join(await realpath(tmpdir()), 'portal-setup-bootstrap-failure-'));
   const configPath = join(root, 'config.json');
