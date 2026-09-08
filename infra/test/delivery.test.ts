@@ -131,9 +131,17 @@ describe('GitHub OIDC delivery identity', () => {
     const template = synth();
     template.hasOutput('ExpirySafeguardRoleArn', { Value: Match.anyValue() });
     const json = JSON.stringify(template.toJSON());
+    const [role] = Object.values(template.findResources('AWS::IAM::Role', {
+      Properties: { RoleName: 'appointment-portal-expiry-apptdemo' },
+    })) as { Properties: { AssumeRolePolicyDocument: { Statement: { Condition: Record<string, unknown> }[] } } }[];
+    const condition = role!.Properties.AssumeRolePolicyDocument.Statement[0]!.Condition;
     expect(json).toContain('scheduler.amazonaws.com');
-    expect(json).toContain('aws:SourceAccount');
-    expect(json).toContain(':schedule/default/appointment-portal-expiry');
+    expect(condition.StringEquals).toEqual({
+      'aws:SourceAccount': '111111111111',
+      'aws:SourceArn': { 'Fn::Join': ['', ['arn:', { Ref: 'AWS::Partition' }, ':scheduler:eu-north-1:111111111111:schedule-group/default']] },
+    });
+    expect(condition).not.toHaveProperty('ArnLike');
+    expect(json).not.toContain(':schedule/default/appointment-portal-expiry');
     expect(json).toContain('appointment-portal-expiry-apptdemo');
     expect(json).toContain('cloudformation:DeleteStack');
     expect(json).toContain(':stack/AppointmentPortal/*');

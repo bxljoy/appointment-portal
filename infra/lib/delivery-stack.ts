@@ -54,8 +54,10 @@ export class DeliveryStack extends Stack {
       roleName: `appointment-portal-expiry-${config.qualifier}`,
       description: 'One-time Scheduler deletion authority for the appointment portal application stack',
       assumedBy: new iam.ServicePrincipal('scheduler.amazonaws.com', { conditions: {
-        StringEquals: { 'aws:SourceAccount': account },
-        ArnLike: { 'aws:SourceArn': `arn:${this.partition}:scheduler:${region}:${account}:schedule/default/appointment-portal-expiry` },
+        StringEquals: {
+          'aws:SourceAccount': account,
+          'aws:SourceArn': `arn:${this.partition}:scheduler:${region}:${account}:schedule-group/default`,
+        },
       } }),
     });
     this.expiryRole.addToPolicy(new iam.PolicyStatement({ actions: ['cloudformation:DeleteStack'],
