@@ -82,6 +82,31 @@ it('terminates the configured public preflight entrypoint normally for a missing
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+it('terminates the configured deployment CLI normally for a missing private config', async () => {
+  const root = await mkdtemp(join(await realpath(tmpdir()), 'portal-deploy-process-'));
+  const missing = join(root, 'missing-config.json');
+  const packageJson = JSON.parse(await readFile(resolve('package.json'), 'utf8')) as { scripts: { 'demo:deploy': string } };
+  const entrypoint = /^tsx\s+(\S+)\s+/.exec(packageJson.scripts['demo:deploy'])?.[1];
+  expect(entrypoint).toBeTruthy();
+  try {
+    const result = await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolveResult, reject) => {
+      const child = spawn(process.execPath, ['--import', 'tsx', resolve(entrypoint!), missing], {
+        cwd: resolve('.'), shell: false, stdio: ['ignore', 'pipe', 'pipe'],
+        env: { PATH: process.env.PATH, HOME: process.env.HOME, TMPDIR: process.env.TMPDIR, NODE_ENV: 'test' },
+      });
+      let stdout = ''; let stderr = '';
+      child.stdout.setEncoding('utf8').on('data', (chunk: string) => { stdout += chunk; });
+      child.stderr.setEncoding('utf8').on('data', (chunk: string) => { stderr += chunk; });
+      child.on('error', reject);
+      child.on('close', (code) => { resolveResult({ code, stdout, stderr }); });
+    });
+    expect(result.code).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toMatch(/ENOENT|no such file/i);
+    expect(result.stderr).not.toMatch(/unsettled top-level await|missing-config\.json.*missing-config\.json/i);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 it('projects setup-delivery default preflight input to the exact strict contract', async () => {
   const root = await mkdtemp(join(await realpath(tmpdir()), 'portal-preflight-entrypoint-'));
   const configPath = join(root, 'config.json');

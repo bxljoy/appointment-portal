@@ -20,7 +20,7 @@
     "demo:prepare": "tsx scripts/prepare-demo-config.ts",
     "demo:preflight": "tsx scripts/preflight-cli.ts .runtime/demo-config.json",
     "demo:setup-delivery": "tsx scripts/setup-delivery.ts .runtime/demo-config.json",
-    "demo:deploy": "tsx scripts/deploy.ts .runtime/demo-config.json",
+    "demo:deploy": "tsx scripts/deploy-cli.ts .runtime/demo-config.json",
     "demo:verify": "tsx scripts/verify-deployment.ts",
     "demo:confirm-registration": "tsx scripts/manual-registration.ts",
     "demo:measure": "tsx scripts/measure-web.ts",
