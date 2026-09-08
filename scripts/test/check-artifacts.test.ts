@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, writeFile, rm, symlink, chmod } from 'node:fs/promises'
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { checkArtifacts, productionDirectories } from '../check-artifacts.js';
+import { checkAdditionalArtifacts, checkArtifacts, productionDirectories, runArtifactCheck } from '../check-artifacts.js';
 
 async function fixture(run: (root: string) => Promise<void>) {
   const root = await mkdtemp(join(tmpdir(), 'portal-artifact-guard-'));
@@ -30,6 +30,38 @@ describe('production and sensitive-runtime artifact inspection', () => {
     await writeFile(join(root, '.runtime/diagnostics.json'), JSON.stringify({ request: { access_token: 'must-stay-private' } }));
     await expect(checkArtifacts(root, [], ['.runtime/diagnostics.json'])).rejects.toThrow(/Unsafe artifacts/);
   }));
+  it('scans a safe explicitly named diagnostics artifact when production builds do not exist', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'portal-diagnostics-guard-'));
+    try {
+      await mkdir(join(root, '.runtime'));
+      await writeFile(join(root, '.runtime/diagnostics.json'), JSON.stringify({
+        capturedAt: '2026-09-08T09:04:21.000Z', manifestAvailable: false, events: [],
+      }));
+      await expect(checkAdditionalArtifacts(root, ['.runtime/diagnostics.json'], [])).resolves.toBeUndefined();
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+  it('rejects credential material in an explicitly named diagnostics artifact without production builds', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'portal-diagnostics-guard-'));
+    try {
+      await mkdir(join(root, '.runtime'));
+      await writeFile(join(root, '.runtime/diagnostics.json'), JSON.stringify({ access_token: 'must-stay-private' }));
+      await expect(checkAdditionalArtifacts(root, ['.runtime/diagnostics.json'], [])).rejects.toThrow(/Unsafe artifacts/);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+  it('requires the explicit additional-only CLI mode to scan diagnostics without production builds', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'portal-diagnostics-cli-'));
+    try {
+      await mkdir(join(root, '.runtime'));
+      await writeFile(join(root, '.runtime/diagnostics.json'), JSON.stringify({
+        capturedAt: '2026-09-08T09:04:21.000Z', manifestAvailable: false, events: [],
+      }));
+      await writeFile(join(root, '--unknown'), JSON.stringify({ safe: true }));
+      await expect(runArtifactCheck(root, ['.runtime/diagnostics.json'], [])).rejects.toThrow();
+      await expect(runArtifactCheck(root, ['--additional-only', '.runtime/diagnostics.json'], [])).resolves.toBeUndefined();
+      await expect(runArtifactCheck(root, ['--additional-only'], [])).rejects.toThrow(/at least one/i);
+      await expect(runArtifactCheck(root, ['--additional-only', '--unknown'], [])).rejects.toThrow(/unknown/i);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
   it.each(['.runtime/account.json', '.auth/state.json', 'test-results/a/trace.zip', 'playwright-report/index.html', 'traces/auth.zip', 'storage-state/state.json', '.env.production', 'private.key', 'reports/index.html', 'reports/login/error-context.md', 'error-context/login.md', 'tests/e2e/error-context.md', 'tests/e2e/storage/account.json', 'tests/e2e/playwright-results/login.json', 'tests/e2e/playwright-reports/login.html', 'blob-report/results.zip', 'docs/.runtime/notes.md'])('rejects sensitive tracked runtime path %s', (path) => fixture(async (root) => {
     await expect(checkArtifacts(root, [path])).rejects.toThrow(/Unsafe artifacts/);
   }));
