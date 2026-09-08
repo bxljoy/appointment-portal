@@ -39,6 +39,8 @@ const manifestSchema = z.strictObject({
   qualifier: z.literal(QUALIFIER),
   sourceCommit: z.string().regex(/^[a-f0-9]{40}$/).optional(),
   repository: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/).optional(),
+  repositoryOwnerId: z.string().regex(/^[1-9]\d{0,19}$/).optional(),
+  repositoryId: z.string().regex(/^[1-9]\d{0,19}$/).optional(),
   branch: z.string().regex(/^[A-Za-z0-9._/-]+$/).optional(),
   expiresAt: z.iso.datetime({ offset: true }).refine((value) => value.endsWith('Z')).optional(),
   phase: z.enum(['bootstrap', 'ready']),

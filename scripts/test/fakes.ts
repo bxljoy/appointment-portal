@@ -15,7 +15,7 @@ export const manifest: DeploymentManifest = {
   toolkitStack: 'AppointmentPortalToolkit',
   qualifier: 'apptdemo',
   sourceCommit: 'a'.repeat(40),
-  repository: 'OWNER/REPOSITORY', branch: 'main',
+  repository: 'OWNER/REPOSITORY', repositoryOwnerId: '18458919', repositoryId: '1360681625', branch: 'main',
   expiresAt: '2030-06-01T01:00:00.000Z',
   phase: 'ready',
   outputs: { FrontendUrl: 'https://demo.cloudfront.net', DistributionId: 'EDISTFIXTURE',

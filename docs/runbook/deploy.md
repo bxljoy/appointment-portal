@@ -89,6 +89,8 @@ enter process arguments or environment variables.
   "maxCostUsd": 5,
   "lambdaConcurrencyMode": "reserved",
   "repository": "OWNER/REPOSITORY",
+  "repositoryOwnerId": "18458919",
+  "repositoryId": "1360681625",
   "branch": "main",
   "sourceCommit": "0123456789abcdef0123456789abcdef01234567",
   "createdAt": "2030-06-01T12:00:00.000Z",
@@ -153,12 +155,23 @@ The application and bootstrap both use qualifier `apptdemo`; the toolkit stack i
 requires `Project=appointment-portal` before reuse. After locally creating the
 project-specific toolkit, run `pnpm demo:setup-delivery`. It inspects any existing
 GitHub provider and imports it only when its URL and `sts.amazonaws.com` audience
-match. Imported providers are shared.
+match. Imported providers are shared. Before creating or updating AWS resources,
+setup also runs `gh api` against the selected repository and its Actions OIDC
+customization endpoint. Authenticate GitHub CLI as a repository administrator with
+API access to both endpoints; unavailable, malformed, or mismatched responses stop
+setup before manifest or AWS mutation.
 
-DeliveryStack trusts only `repo:OWNER/REPOSITORY:environment:demo` with audience
-`sts.amazonaws.com`. In GitHub, create environment `demo`, restrict its deployment
+DeliveryStack trusts only `repo:OWNER@OWNER_ID/REPOSITORY@REPOSITORY_ID:environment:demo`
+with audience `sts.amazonaws.com`. The workflow copies GitHub's immutable
+`repository_owner_id` and `repository_id` contexts into the private configuration;
+setup validates them as nonzero decimal IDs. In GitHub, create environment `demo`, restrict its deployment
 branch to the configured branch, and populate the variables/secrets used by
-`demo.yml`, including `AWS_DELIVERY_ROLE_ARN`. Set environment variable
+`demo.yml`, including `AWS_DELIVERY_ROLE_ARN`. A delivery-only bootstrap manifest
+from the earlier name-only trust format may adopt these IDs and the current commit;
+an application manifest cannot be rebound to a different commit or repository identity.
+Fresh setup and legacy delivery-only adoption require `AppointmentPortal` to be
+absent in CloudFormation; any live application stack state blocks identity binding.
+Set environment variable
 `LAMBDA_CONCURRENCY_MODE` to `shared-unreserved` only for the constrained disposable
 account; when absent, the workflow and private configuration default to `reserved`.
 The workflow also rejects a different

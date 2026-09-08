@@ -5,6 +5,8 @@ import { z } from 'zod';
 
 const propsSchema = z.strictObject({
   repository: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/),
+  repositoryOwnerId: z.string().regex(/^[1-9]\d{0,19}$/),
+  repositoryId: z.string().regex(/^[1-9]\d{0,19}$/),
   branch: z.string().regex(/^[A-Za-z0-9._/-]+$/).max(255),
   qualifier: z.literal('apptdemo'),
   projectTag: z.literal('appointment-portal'),
@@ -21,7 +23,8 @@ export class DeliveryStack extends Stack {
     const account = z.string().regex(/^\d{12}$/).parse(props.env?.account);
     const region = z.string().min(1).parse(props.env?.region);
     const config = propsSchema.parse({
-      repository: props.repository, branch: props.branch, qualifier: props.qualifier,
+      repository: props.repository, repositoryOwnerId: props.repositoryOwnerId, repositoryId: props.repositoryId,
+      branch: props.branch, qualifier: props.qualifier,
       projectTag: props.projectTag, ...(props.oidcProviderArn ? { oidcProviderArn: props.oidcProviderArn } : {}),
     });
     super(scope, id, { ...props, analyticsReporting: false,
@@ -34,7 +37,7 @@ export class DeliveryStack extends Stack {
     const principal = new iam.FederatedPrincipal(providerArn, {
       StringEquals: {
         'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com',
-        'token.actions.githubusercontent.com:sub': `repo:${config.repository}:environment:demo`,
+        'token.actions.githubusercontent.com:sub': immutableRepositorySubject(config.repository, config.repositoryOwnerId, config.repositoryId),
       },
     }, 'sts:AssumeRoleWithWebIdentity');
     this.role = new iam.Role(this, 'DeliveryRole', {
@@ -141,3 +144,8 @@ export class DeliveryStack extends Stack {
     new CfnOutput(this, 'AllowedBranch', { value: config.branch });
   }
 }
+
+const immutableRepositorySubject = (repository: string, ownerId: string, repositoryId: string) => {
+  const [owner, name] = repository.split('/') as [string, string];
+  return `repo:${owner}@${ownerId}/${name}@${repositoryId}:environment:demo`;
+};

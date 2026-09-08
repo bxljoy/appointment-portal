@@ -35,6 +35,8 @@ jobs:
       MAX_COST_USD: ${{ vars.MAX_COST_USD }}
       DEMO_DURATION_HOURS: ${{ vars.DEMO_DURATION_HOURS }}
       LAMBDA_CONCURRENCY_MODE: ${{ vars.LAMBDA_CONCURRENCY_MODE || 'reserved' }}
+      DEMO_REPOSITORY_OWNER_ID: ${{ github.repository_owner_id }}
+      DEMO_REPOSITORY_ID: ${{ github.repository_id }}
       DEMO_PATIENT_A_EMAIL: ${{ secrets.DEMO_PATIENT_A_EMAIL }}
       DEMO_PATIENT_B_EMAIL: ${{ secrets.DEMO_PATIENT_B_EMAIL }}
       DEMO_CLINICIAN_A_EMAIL: ${{ secrets.DEMO_CLINICIAN_A_EMAIL }}
@@ -87,7 +89,7 @@ jobs:
         if: failure()
         run: |
           pnpm demo:diagnostics
-          pnpm check:artifacts -- --additional-only .runtime/diagnostics.json
+          pnpm check:artifacts --additional-only .runtime/diagnostics.json
       - name: Attempt application cleanup after failure
         if: failure()
         continue-on-error: true

@@ -13,6 +13,8 @@ export type DemoConfig = {
   sourceCommit?: string;
   expiresAt?: string;
   repository?: string;
+  repositoryOwnerId?: string;
+  repositoryId?: string;
   branch?: string;
 };
 export type StackInspection = { exists: boolean; owned: boolean; phase?: 'bootstrap' | 'ready'; outputs?: Record<string, string>; sourceCommit?: string; status?: string };
@@ -60,7 +62,10 @@ export const runDemo = async (deps: DemoDependencies): Promise<DeploymentManifes
       phase: application.phase, outputs: application.outputs, resources: [],
       ...(deps.config.sourceCommit ? { sourceCommit: deps.config.sourceCommit } : {}),
       ...(deps.config.expiresAt ? { expiresAt: deps.config.expiresAt } : {}),
-      ...(deps.config.repository ? { repository: deps.config.repository } : {}), ...(deps.config.branch ? { branch: deps.config.branch } : {}),
+      ...(deps.config.repository ? { repository: deps.config.repository } : {}),
+      ...(deps.config.repositoryOwnerId ? { repositoryOwnerId: deps.config.repositoryOwnerId } : {}),
+      ...(deps.config.repositoryId ? { repositoryId: deps.config.repositoryId } : {}),
+      ...(deps.config.branch ? { branch: deps.config.branch } : {}),
     };
     await deps.saveManifest(recovered);
     saved = recovered;
@@ -102,7 +107,10 @@ const assertSavedTarget = (manifest: DeploymentManifest | undefined, config: Dem
     manifest.appStack !== config.appStack || manifest.toolkitStack !== config.toolkitStack || manifest.projectTag !== config.projectTag ||
     config.sourceCommit !== undefined && manifest.sourceCommit !== config.sourceCommit ||
     config.expiresAt !== undefined && manifest.expiresAt !== config.expiresAt ||
-    config.repository !== undefined && manifest.repository !== config.repository || config.branch !== undefined && manifest.branch !== config.branch) {
+    config.repository !== undefined && manifest.repository !== config.repository ||
+    config.repositoryOwnerId !== undefined && manifest.repositoryOwnerId !== config.repositoryOwnerId ||
+    config.repositoryId !== undefined && manifest.repositoryId !== config.repositoryId ||
+    config.branch !== undefined && manifest.branch !== config.branch) {
     throw new Error('Saved deployment manifest does not match the requested target.');
   }
 };

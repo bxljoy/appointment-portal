@@ -71,6 +71,7 @@ describe('manual disposable environment workflows', () => {
     expect(job.env).toMatchObject({
       DATABASE_URL: 'postgres://portal@127.0.0.1:54329/portal', AWS_CONFIG_FILE: '/dev/null',
       AWS_SHARED_CREDENTIALS_FILE: '/dev/null', AWS_EC2_METADATA_DISABLED: 'true',
+      DEMO_REPOSITORY_OWNER_ID: '${{ github.repository_owner_id }}', DEMO_REPOSITORY_ID: '${{ github.repository_id }}',
     });
     const gates = job.steps.findIndex((step) => step.name === 'Install and run local quality gates');
     const credentials = job.steps.findIndex((step) => step.uses?.includes('configure-aws-credentials'));
@@ -84,7 +85,8 @@ describe('manual disposable environment workflows', () => {
     const scan = steps.find((step) => step.run?.includes('pnpm demo:diagnostics'))!;
     const diagnosticUpload = steps.find((step) => step.uses?.includes('upload-artifact') && step.with?.path?.includes('diagnostics.json'))!;
     expect(scan.id).toBeTruthy();
-    expect(scan.run).toContain('pnpm check:artifacts -- --additional-only .runtime/diagnostics.json');
+    expect(scan.run).toContain('pnpm check:artifacts --additional-only .runtime/diagnostics.json');
+    expect(scan.run).not.toContain('pnpm check:artifacts -- --additional-only');
     expect(diagnosticUpload.if).toContain(`steps.${scan.id}.outcome == 'success'`);
     expect(diagnosticUpload.if).toContain('failure()');
     const unconditionalUpload = steps.find((step) => step.uses?.includes('upload-artifact') && step.if === 'always()');

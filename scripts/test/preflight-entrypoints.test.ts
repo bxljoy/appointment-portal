@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { expect, it, vi } from 'vitest';
 import { runPreflightCli } from '../preflight-cli.js';
 import { runProcess, toPreflightInput, type PreflightInput, type PreflightProbe } from '../preflight.js';
+import { parseAwsDemoInput } from '../aws-lifecycle.js';
 import { setupDelivery } from '../setup-delivery.js';
 import { manifest } from './fakes.js';
 
@@ -17,6 +18,8 @@ const fullInput = {
   maxCostUsd: 5,
   lambdaConcurrencyMode: 'shared-unreserved' as const,
   repository: 'OWNER/REPOSITORY',
+  repositoryOwnerId: '18458919',
+  repositoryId: '1360681625',
   branch: 'main',
   sourceCommit: 'a'.repeat(40),
   createdAt: preparedAt.toISOString(),
@@ -46,6 +49,12 @@ it('projects the public preflight CLI input to the exact strict contract', async
   });
   expect(Object.keys(observed[0]!).sort()).toEqual(preflightKeys);
   expect(observed[0]).toEqual(toPreflightInput(fullInput));
+});
+
+it('requires immutable decimal GitHub repository identifiers in the private demo configuration', () => {
+  expect(() => parseAwsDemoInput({ ...fullInput, repositoryOwnerId: undefined }, preparedAt)).toThrow();
+  expect(() => parseAwsDemoInput({ ...fullInput, repositoryId: '0' }, preparedAt)).toThrow();
+  expect(parseAwsDemoInput(fullInput, preparedAt)).toMatchObject({ repositoryOwnerId: '18458919', repositoryId: '1360681625' });
 });
 
 it('terminates the configured public preflight entrypoint normally for a missing private config', async () => {

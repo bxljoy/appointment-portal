@@ -8,6 +8,7 @@ const envSchema = z.object({
   MAX_COST_USD: z.coerce.number().positive(), DEMO_DURATION_HOURS: z.coerce.number().positive().max(6),
   LAMBDA_CONCURRENCY_MODE: z.enum(['reserved', 'shared-unreserved']).default('reserved'),
   GITHUB_REPOSITORY: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/), GITHUB_REF_NAME: z.string().min(1),
+  DEMO_REPOSITORY_OWNER_ID: z.string().regex(/^[1-9]\d{0,19}$/), DEMO_REPOSITORY_ID: z.string().regex(/^[1-9]\d{0,19}$/),
   GITHUB_SHA: z.string().regex(/^[a-f0-9]{40}$/), PRICE_REPORT_JSON: z.string().min(2),
   DEMO_PATIENT_A_EMAIL: z.email(), DEMO_PATIENT_B_EMAIL: z.email(), DEMO_CLINICIAN_A_EMAIL: z.email(), DEMO_CLINICIAN_B_EMAIL: z.email(),
 });
@@ -28,5 +29,6 @@ await writePrivateJson(resolve(runtime, 'demo-config.json'), {
   durationHours: env.DEMO_DURATION_HOURS, maxCostUsd: env.MAX_COST_USD,
   lambdaConcurrencyMode: env.LAMBDA_CONCURRENCY_MODE,
   createdAt, expiresAt,
-  repository: env.GITHUB_REPOSITORY, branch: env.GITHUB_REF_NAME, sourceCommit: env.GITHUB_SHA, accountsFile, priceReport,
+  repository: env.GITHUB_REPOSITORY, repositoryOwnerId: env.DEMO_REPOSITORY_OWNER_ID,
+  repositoryId: env.DEMO_REPOSITORY_ID, branch: env.GITHUB_REF_NAME, sourceCommit: env.GITHUB_SHA, accountsFile, priceReport,
 });

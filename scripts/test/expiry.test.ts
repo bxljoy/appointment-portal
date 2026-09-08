@@ -14,7 +14,7 @@ test('binds the AWS safeguard to an absolute maximum lifetime', () => {
 test('binds configuration creation and expiry to the current execution clock', () => {
   const now = new Date('2030-06-01T12:00:00.000Z');
   const input = { account: manifest.account, region: manifest.region, postgresVersion: '17.6', durationHours: 2, maxCostUsd: 5,
-    repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), accountsFile: '/private/accounts', priceReport: '/private/prices' };
+    repository: 'OWNER/REPOSITORY', repositoryOwnerId: '18458919', repositoryId: '1360681625', branch: 'main', sourceCommit: 'a'.repeat(40), accountsFile: '/private/accounts', priceReport: '/private/prices' };
   const current = { ...input, createdAt: '2030-06-01T11:55:01.000Z', expiresAt: '2030-06-01T13:55:01.000Z' };
   expect(parseAwsDemoInput(current, now)).toMatchObject({ lambdaConcurrencyMode: 'reserved' });
   expect(parseAwsDemoInput({ ...current, lambdaConcurrencyMode: 'shared-unreserved' }, now))

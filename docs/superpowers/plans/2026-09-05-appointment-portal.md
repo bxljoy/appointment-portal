@@ -913,7 +913,8 @@ Define `ResourceRecord` as the resource item shape above.
   Mark resources owned only when created by this project or ownership is established.
   Record bootstrap S3/ECR/SSM/IAM assets for final cleanup.
 - [ ] Define DeliveryStack with a GitHub OIDC role restricted by exact audience
-  sts.amazonaws.com and subject `repo:OWNER/REPOSITORY:environment:demo`; configure
+  sts.amazonaws.com and immutable subject
+  `repo:OWNER@OWNER_ID/REPOSITORY@REPOSITORY_ID:environment:demo`; configure
   the GitHub environment to allow the intended branch. OWNER/REPOSITORY here is a
   runtime value supplied from the selected repository, not a literal in the policy.
   Reuse an existing GitHub OIDC provider if present and mark it shared. Grant only

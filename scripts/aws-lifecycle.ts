@@ -30,6 +30,7 @@ const configSchema = z.strictObject({
   account: z.string().regex(/^\d{12}$/), region: z.string().regex(/^[a-z]{2}(?:-[a-z]+)+-[1-9]\d*$/),
   postgresVersion: z.string().regex(/^17\.[1-9]\d*$/), durationHours: z.number().positive().max(6), maxCostUsd: z.number().positive(),
   repository: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/), branch: z.string().regex(/^[A-Za-z0-9._/-]+$/),
+  repositoryOwnerId: z.string().regex(/^[1-9]\d{0,19}$/), repositoryId: z.string().regex(/^[1-9]\d{0,19}$/),
   sourceCommit: z.string().regex(/^[a-f0-9]{40}$/),
   expiresAt: z.iso.datetime({ offset: true }).refine((value) => value.endsWith('Z')),
   createdAt: z.iso.datetime({ offset: true }).refine((value) => value.endsWith('Z')),
@@ -195,7 +196,7 @@ export const makeAwsDemoDependencies = (input: AwsDemoInput, clients = clientsFo
         deliveryStack: DELIVERY_STACK, toolkitStack: TOOLKIT_STACK, qualifier: QUALIFIER, phase: live.phase, outputs,
         resources: deduplicateResources([...application, ...toolkit, ...delivery]),
         ...(input.sourceCommit ? { sourceCommit: input.sourceCommit } : {}), expiresAt: input.expiresAt,
-        repository: input.repository, branch: input.branch,
+        repository: input.repository, repositoryOwnerId: input.repositoryOwnerId, repositoryId: input.repositoryId, branch: input.branch,
       };
       return activeManifest;
     },
@@ -241,7 +242,7 @@ export const makeAwsDemoDependencies = (input: AwsDemoInput, clients = clientsFo
       account: input.account, region: input.region, projectTag: PROJECT_TAG, appStack: APP_STACK, deliveryStack: DELIVERY_STACK,
       toolkitStack: TOOLKIT_STACK, qualifier: QUALIFIER, phase, outputs, resources,
       ...(input.sourceCommit ? { sourceCommit: input.sourceCommit } : {}), expiresAt: input.expiresAt,
-      repository: input.repository, branch: input.branch,
+      repository: input.repository, repositoryOwnerId: input.repositoryOwnerId, repositoryId: input.repositoryId, branch: input.branch,
     };
     await (manifestStore.save ?? saveDeploymentManifest)(activeManifest);
   }

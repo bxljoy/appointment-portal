@@ -6,7 +6,8 @@ import { DeliveryStack } from '../lib/delivery-stack.js';
 const synth = (oidcProviderArn?: string) => {
   const stack = new DeliveryStack(new App(), 'TestDelivery', {
     env: { account: '111111111111', region: 'eu-north-1' },
-    repository: 'OWNER/REPOSITORY', branch: 'main', qualifier: 'apptdemo',
+    repository: 'OWNER/REPOSITORY', repositoryOwnerId: '18458919', repositoryId: '1360681625',
+    branch: 'main', qualifier: 'apptdemo',
     projectTag: 'appointment-portal', ...(oidcProviderArn ? { oidcProviderArn } : {}),
   });
   return Template.fromStack(stack);
@@ -21,7 +22,7 @@ describe('GitHub OIDC delivery identity', () => {
         Condition: {
           StringEquals: {
             'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com',
-            'token.actions.githubusercontent.com:sub': 'repo:OWNER/REPOSITORY:environment:demo',
+            'token.actions.githubusercontent.com:sub': 'repo:OWNER@18458919/REPOSITORY@1360681625:environment:demo',
           },
         },
       })] },

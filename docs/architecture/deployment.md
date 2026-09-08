@@ -18,9 +18,16 @@ migration, publication, and inventory use AWS SDK v3 clients. The publisher chec
 the actual Cognito callback against CloudFront, uploads immutable content hashes
 first, publishes public config and shell with `no-cache`, and waits for invalidation.
 
-DeliveryStack uses exact audience `sts.amazonaws.com` and subject
-`repo:OWNER/REPOSITORY:environment:demo`. GitHub environment policy supplies the
+DeliveryStack uses exact audience `sts.amazonaws.com` and immutable subject
+`repo:OWNER@OWNER_ID/REPOSITORY@REPOSITORY_ID:environment:demo`. GitHub environment policy supplies the
 branch boundary because an environment claim replaces the ref form of `sub`.
+GitHub's numeric repository-owner and repository IDs are validated in the private
+configuration and carried through CDK context, so renaming either path segment does
+not silently widen or break the identity boundary.
+Delivery setup confirms both numeric IDs and the exact `sub_claim_prefix` through
+authenticated GitHub API reads before mutation. A bootstrap-only legacy manifest may
+adopt that identity only after CloudFormation confirms that no application stack exists;
+the same absence check applies before setup creates a fresh identity-bound manifest.
 Deployment assumes only `apptdemo` bootstrap roles. CloudFormation's execution role
 owns template provisioning authority; runtime roles remain feature-scoped.
 

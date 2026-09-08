@@ -34,7 +34,7 @@ beforeEach(async () => {
   ];
   await writeFile(accountsPath, JSON.stringify(accounts), { mode: 0o600 });
   await writeFile(configPath, JSON.stringify({ account: manifest.account, region: manifest.region, postgresVersion: '17.6', durationHours: 2,
-    maxCostUsd: 5, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), ...expiry,
+    maxCostUsd: 5, repository: 'OWNER/REPOSITORY', repositoryOwnerId: '18458919', repositoryId: '1360681625', branch: 'main', sourceCommit: 'a'.repeat(40), ...expiry,
     accountsFile: accountsPath, priceReport: accountsPath }), { mode: 0o600 });
   await writeFile(deploymentPath, JSON.stringify({ ...manifest, outputs: { ...manifest.outputs, UserPoolId: 'eu-north-1_fixture',
     ApiUrl: 'https://api.example.com', WebBucketName: 'fixture-bucket' } }), { mode: 0o600 });

@@ -23,13 +23,16 @@ new PortalStack(app, 'AppointmentPortal', {
 const repository = app.node.tryGetContext('repository') as unknown;
 if (repository !== undefined) {
   const branch = app.node.tryGetContext('branch') as unknown;
+  const repositoryOwnerId = app.node.tryGetContext('repositoryOwnerId') as unknown;
+  const repositoryId = app.node.tryGetContext('repositoryId') as unknown;
   const oidcProviderArn = app.node.tryGetContext('oidcProviderArn') as unknown;
-  if (typeof repository !== 'string' || typeof branch !== 'string' || (oidcProviderArn !== undefined && typeof oidcProviderArn !== 'string')) {
-    throw new Error('Delivery context requires repository and branch strings plus an optional OIDC provider ARN.');
+  if (typeof repository !== 'string' || typeof repositoryOwnerId !== 'string' || typeof repositoryId !== 'string' || typeof branch !== 'string' ||
+      (oidcProviderArn !== undefined && typeof oidcProviderArn !== 'string')) {
+    throw new Error('Delivery context requires repository identity and branch strings plus an optional OIDC provider ARN.');
   }
   new DeliveryStack(app, 'AppointmentPortalDelivery', {
     env: { account: config.account, region: config.region },
-    repository, branch, ...(oidcProviderArn ? { oidcProviderArn } : {}),
+    repository, repositoryOwnerId, repositoryId, branch, ...(oidcProviderArn ? { oidcProviderArn } : {}),
     qualifier: 'apptdemo', projectTag: 'appointment-portal',
   });
 }
