@@ -1,7 +1,7 @@
 import { act, render, screen, waitFor, cleanup } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { UserManager, type UserManagerSettings } from 'oidc-client-ts';
+import { AccessTokenEvents, UserManager, type UserManagerSettings } from 'oidc-client-ts';
 import { CognitoSessionProvider } from './cognito-session';
 import { useSession, type Session } from './auth-provider';
 import type { CognitoConfig } from '../../lib/config';
@@ -123,7 +123,8 @@ it('processes a valid OAuth error before removing its callback parameters', asyn
   expect(fetch).not.toHaveBeenCalled();
 });
 
-it('clears the user and private cache when the library expires the access token', async () => {
+it('clears the user and private cache when the library raises access-token expiry', async () => {
+  const expirySubscription = vi.spyOn(AccessTokenEvents.prototype, 'addAccessTokenExpired');
   const request = await authorize();
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(tokenResponse(request.searchParams.get('nonce') ?? 'baseline-no-nonce')));
   callback(request);
@@ -132,10 +133,11 @@ it('clears the user and private cache when the library expires the access token'
   client.setQueryData(['fixture-user', 'appointments'], ['private']);
   const manager = harness.managers.at(-1)!;
   manager.stopSilentRenew();
-  const user = (await manager.getUser())!;
-  user.expires_in = 1;
-  await act(async () => { await manager.events.load(user); });
-  await waitFor(() => expect(screen.getByText('Signed out')).toBeInTheDocument(), { timeout: 3000 });
+  // authorize() disposes its provider before the callback mounts the active one.
+  expect(expirySubscription).toHaveBeenCalledTimes(2);
+  const activeExpiryHandler = expirySubscription.mock.calls.at(-1)![0];
+  await act(async () => { await activeExpiryHandler(); });
+  await screen.findByText('Signed out');
   expect(await manager.getUser()).toBeNull();
   expect(client.getQueryCache().getAll()).toHaveLength(0);
 });
