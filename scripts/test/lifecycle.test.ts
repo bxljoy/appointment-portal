@@ -432,6 +432,7 @@ describe('disposable deployment lifecycle', () => {
 
   it('passes the deployment phase and concurrency mode on every application deploy', async () => {
     const commands: (readonly string[])[] = [];
+    const recoveries: Array<{ phase: string }> = [];
     const clients = fakeAwsClients({ DescribeStacksCommand: [
       { Stacks: [{ Tags: [{ Key: 'Project', Value: manifest.projectTag }, { Key: 'SourceCommit', Value: 'a'.repeat(40) }],
         Parameters: [{ ParameterKey: 'DeploymentPhase', ParameterValue: 'bootstrap' }] }] },
@@ -441,7 +442,8 @@ describe('disposable deployment lifecycle', () => {
     const runtime = makeAwsDemoDependencies({ account: manifest.account, region: manifest.region, postgresVersion: '17.6', durationHours: 1,
       maxCostUsd: 1, lambdaConcurrencyMode: 'shared-unreserved', repository: 'OWNER/REPOSITORY', repositoryOwnerId: '18458919', repositoryId: '1360681625', branch: 'main', sourceCommit: 'a'.repeat(40),
       ...expiry, accountsFile: '/unused', priceReport: '/unused' }, clients,
-    async (_executable, args) => { commands.push(args); throw new Error('stop after command capture'); });
+    async (_executable, args) => { commands.push(args); throw new Error('stop after command capture'); },
+    { save: async (value) => { recoveries.push(structuredClone(value)); } });
     await expect(runtime.deploy('bootstrap')).rejects.toThrow('stop after command capture');
     await expect(runtime.deploy('ready', manifest.outputs.FrontendUrl)).rejects.toThrow('stop after command capture');
     const deploys = commands.filter((args) => args.includes('deploy'));
@@ -451,6 +453,7 @@ describe('disposable deployment lifecycle', () => {
       expect(deploys[index]!.slice(parameter, parameter + 2)).toEqual(['--parameters', `${manifest.appStack}:DeploymentPhase=${phase}`]);
       expect(deploys[index]).toContain('lambdaConcurrencyMode=shared-unreserved');
     }
+    expect(recoveries.map((recovery) => recovery.phase)).toEqual(['bootstrap', 'ready']);
   });
 
   it.each([
