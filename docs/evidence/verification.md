@@ -18,6 +18,8 @@ changing the status to verified:
   reopening, and clinician cancel-withdraw;
 - uncached CloudFront API responses, protected direct API Gateway, private S3,
   nested SPA refresh, and non-HTML missing-asset behavior;
+- a normal authenticated application request plus stage-level 429 responses generated
+  only on an unmatched gateway route that cannot invoke a Lambda integration;
 - request-correlated application completion records, including bounded warm/cold
   counts and observed duration without log bodies or an SLA claim;
 - one manual self-registration, email verification, initial patient role, sign-out,

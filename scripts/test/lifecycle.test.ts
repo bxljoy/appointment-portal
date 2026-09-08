@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { estimateCost, publishFrontend, runDemo, type DemoDependencies } from '../deploy.js';
+import { deploymentCompletionMessage, estimateCost, publishFrontend, runDemo, type DemoDependencies } from '../deploy.js';
 import { runPreflight } from '../preflight.js';
 import { DEPLOYMENT_PATH, loadDeploymentManifest, parseDeploymentManifest } from '../lifecycle-types.js';
 import { makeAwsDemoDependencies, makeAwsPreflightProbe, probeApplicationDatabase } from '../aws-lifecycle.js';
@@ -37,6 +37,12 @@ const deps = (saved?: typeof manifest): DemoDependencies & { events: string[] } 
 };
 
 describe('disposable deployment lifecycle', () => {
+  it('reports automated verification without claiming the pending manual Cognito gate passed', () => {
+    const message = deploymentCompletionMessage('https://demo.cloudfront.net');
+    expect(message).toMatch(/automated deployment verification passed/i);
+    expect(message).toMatch(/manual Cognito.*pending/i);
+    expect(message).not.toMatch(/deployment verified/i);
+  });
   it('requires a successful benign profiles response from the application Lambda probe', async () => {
     const lambda = { send: vi.fn(async (command: unknown) => { void command; return { StatusCode: 200, Payload: Buffer.from(JSON.stringify({ statusCode: 200,
       body: JSON.stringify({ id: '11111111-1111-4111-8111-111111111111', role: 'patient' }) })) }; }) };

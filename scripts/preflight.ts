@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { closeSync, constants, openSync } from 'node:fs';
 import { z } from 'zod';
 import { estimateCost, type CostRates } from './deploy.js';
 
@@ -48,16 +49,31 @@ export const runPreflight = async (raw: PreflightInput, probe: PreflightProbe) =
 };
 
 export type ProcessResult = { stdout: string; stderr: string };
-export type ProcessRunner = (executable: string, args: readonly string[], options?: { cwd?: string; env?: NodeJS.ProcessEnv }) => Promise<ProcessResult>;
+export type ProcessRunner = (executable: string, args: readonly string[], options?: {
+  cwd?: string; env?: NodeJS.ProcessEnv; stdoutFile?: string;
+}) => Promise<ProcessResult>;
 
 export const runProcess: ProcessRunner = (executable, args, options = {}) => new Promise((resolvePromise, reject) => {
   if (args.some((arg) => /password|secret(?:access)?key|sessiontoken/i.test(arg))) {
     reject(new Error('Credentials and secret payloads are forbidden in subprocess arguments.')); return;
   }
-  const child = spawn(executable, [...args], { cwd: options.cwd, env: options.env ?? process.env, shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
+  let stdoutDescriptor: number | undefined;
+  try {
+    if (options.stdoutFile) stdoutDescriptor = openSync(options.stdoutFile,
+      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+  } catch (error) { reject(error); return; }
+  let child: ReturnType<typeof spawn>;
+  try {
+    child = spawn(executable, [...args], { cwd: options.cwd, env: options.env ?? process.env, shell: false,
+      stdio: ['ignore', stdoutDescriptor ?? 'pipe', 'pipe'] });
+  } catch (error) {
+    if (stdoutDescriptor !== undefined) closeSync(stdoutDescriptor);
+    reject(error); return;
+  }
+  if (stdoutDescriptor !== undefined) closeSync(stdoutDescriptor);
   let stdout = ''; let stderr = '';
-  child.stdout.setEncoding('utf8').on('data', (chunk: string) => { stdout += chunk; });
-  child.stderr.setEncoding('utf8').on('data', (chunk: string) => { stderr += chunk; });
+  child.stdout?.setEncoding('utf8').on('data', (chunk: string) => { stdout += chunk; });
+  child.stderr?.setEncoding('utf8').on('data', (chunk: string) => { stderr += chunk; });
   child.on('error', reject);
   child.on('close', (code) => code === 0 ? resolvePromise({ stdout, stderr }) : reject(new Error(`${executable} exited with status ${code ?? 'unknown'}.`)));
 });

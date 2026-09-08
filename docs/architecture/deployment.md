@@ -139,7 +139,14 @@ produce identical asset hashes across bootstrap and ready synth directories.
 All ten approved routes retain the `/api` prefix and explicitly require the Cognito
 issuer, app-client audience, and `portal/access` scope. There is no anonymous
 default route, CORS wildcard, or separate direct-origin authentication path. The
-default stage permits an average ten requests/second with a burst of twenty.
+default stage permits an average two requests/second with a burst of three, leaving
+headroom below each feature Lambda's reserved concurrency of five. Deployed throttling
+tests generate the burst on an unknown gateway-only route, so the 429 proof cannot
+consume Lambda concurrency. API Gateway documents the token-bucket settings as
+best-effort targets in [HTTP API throttling](https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-throttling.html)
+(checked 2026-09-08), and documents the unmatched-route behavior in
+[HTTP API route selection](https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-develop-routes.html)
+(checked 2026-09-08).
 Local development calls `/api` through Vite's local proxy; direct cross-origin use
 of the deployed API from localhost is not enabled.
 

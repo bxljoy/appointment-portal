@@ -69,16 +69,18 @@ test('the S3 origin is private and CloudFront returns caller-specific identity @
   const config = await awsRuntimeConfig(page); expect(config.mode).toBe('cognito');
 });
 
-test('the separately controlled burst is throttled without server errors @aws', async ({ page, playwright }) => {
+test('the stage throttles a gateway-only route without using Lambda concurrency @aws', async ({ page, playwright }) => {
   await page.goto('/');
   const tokens = await acquireTokens(page, 'patient-b');
-  const context = await apiContext(playwright, tokens.access_token);
+  const authenticated = await apiContext(playwright, tokens.access_token);
+  const gatewayOnly = await playwright.request.newContext({ baseURL: process.env.PORTAL_E2E_AWS_API_URL });
   try {
-    const responses = await Promise.all(Array.from({ length: 30 }, () => context.get('/api/me')));
+    const normal = await authenticated.get('/api/me'); recordRequestId(normal); expect(normal.status()).toBe(200);
+    const responses = await Promise.all(Array.from({ length: 30 }, () => gatewayOnly.get('/api/throttle-probe')));
     const statuses = responses.map((response) => response.status());
     expect(statuses).toContain(429);
-    expect(statuses.every((status) => status === 200 || status === 429)).toBe(true);
-  } finally { await context.dispose(); }
+    expect(statuses.every((status) => status === 404 || status === 429)).toBe(true);
+  } finally { await authenticated.dispose(); await gatewayOnly.dispose(); }
   await new Promise((resolve) => setTimeout(resolve, 2_000));
 });
 

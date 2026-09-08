@@ -6,7 +6,8 @@ import { setupDelivery } from '../setup-delivery.js';
 import { DELIVERY_STACK, TOOLKIT_STACK, type DeploymentManifest } from '../lifecycle-types.js';
 import { manifest } from './fakes.js';
 
-const expiry = { createdAt: '2030-06-01T00:00:00.000Z', expiresAt: '2030-06-01T01:00:00.000Z' };
+const preparedAt = new Date();
+const expiry = { createdAt: preparedAt.toISOString(), expiresAt: new Date(preparedAt.getTime() + 60 * 60_000).toISOString() };
 
 it('persists an ownership-neutral recovery target before bootstrap can fail', async () => {
   const root = await mkdtemp(join(await realpath(tmpdir()), 'portal-setup-bootstrap-failure-'));

@@ -26,7 +26,7 @@ type SetupDeliveryDependencies = {
 };
 
 export const setupDelivery = async (configPath: string, dependencies: SetupDeliveryDependencies = {}): Promise<{ roleArn: string; oidcProviderArn?: string }> => {
-  const config = await readAwsDemoInput(configPath);
+  const config = await readAwsDemoInput(configPath, { requireCurrentCreation: false, requireUnexpired: false });
   const sts = dependencies.sts ?? new STSClient({ region: config.region });
   const account = z.string().regex(/^\d{12}$/).parse((await sts.send(new GetCallerIdentityCommand({}))).Account);
   if (account !== config.account) throw new Error('AWS account mismatch.');

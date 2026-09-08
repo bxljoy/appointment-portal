@@ -58,13 +58,18 @@ shared GitHub provider. Secrets deletion is asynchronous; see the official
 
 For a cancelled GitHub runner, download the demo run's `deployment-manifest`
 artifact and run these commands locally. `always()` cannot cover runner loss. The
-manual destroy workflow requires both the run ID and the approved deployed commit.
+manual destroy workflow requires the selected successful demo run ID; selecting that
+run is the operator's approval of its authenticated deployed commit.
 Before requesting AWS credentials or downloading files, `demo:restore-manifest`
 queries GitHub's run and artifact metadata with `actions:read` and requires the exact
 repository, `.github/workflows/demo.yml`, configured main branch, completed successful
-run, approved head SHA, unexpired `deployment-manifest`, and its SHA-256 digest. After
-download it binds the parsed manifest's account, region, repository, branch, and commit
-to that provenance. Arbitrary downloaded JSON is never accepted as deletion authority.
+run, head SHA, and unexpired `deployment-manifest`. The destroy workflow always checks
+out its own trusted dispatch commit from the configured branch; it never checks out or
+executes the candidate demo commit. The trusted helper downloads the exact artifact ID
+as raw ZIP bytes, compares those bytes with GitHub's SHA-256 digest, rejects traversal,
+symlink, and duplicate ZIP entries, and extracts only root `deployment.json`. It then
+binds the parsed manifest's account, region, repository, branch, and commit to the run
+provenance. Arbitrary downloaded JSON is never accepted as deletion authority.
 
 Restored `owned:true` records are hints only. Each direct delete requires current
 `Project=appointment-portal` tags or fresh membership in a currently owned exact

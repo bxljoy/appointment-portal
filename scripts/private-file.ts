@@ -37,6 +37,11 @@ export const writePrivateJson = async (path: string, value: unknown): Promise<vo
 };
 
 export const readPrivateFile = async (path: string, maximumBytes = 1_000_000): Promise<string> => {
+  const contents = await readPrivateBytes(path, maximumBytes);
+  return contents.toString('utf8');
+};
+
+export const readPrivateBytes = async (path: string, maximumBytes = 1_000_000): Promise<Buffer> => {
   const target = resolve(path);
   await assertNoSymlinkAncestors(dirname(target));
   const handle = await open(target, constants.O_RDONLY | constants.O_NOFOLLOW);
@@ -45,7 +50,7 @@ export const readPrivateFile = async (path: string, maximumBytes = 1_000_000): P
     if (!info.isFile() || info.nlink !== 1 || !ownedByProcess(info.uid) || (info.mode & 0o777) !== 0o600 || info.size > maximumBytes) {
       throw new Error('Unsafe private file.');
     }
-    return handle.readFile('utf8');
+    return handle.readFile();
   } finally { await handle.close(); }
 };
 

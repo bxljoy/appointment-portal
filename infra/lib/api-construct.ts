@@ -84,7 +84,7 @@ export class ApiConstruct extends Construct {
     }
     new HttpStage(this, 'DefaultStage', {
       httpApi: this.httpApi, stageName: '$default', autoDeploy: true,
-      throttle: { rateLimit: 5, burstLimit: 5 },
+      throttle: { rateLimit: 2, burstLimit: 3 },
       accessLogSettings: {
         destination: new LogGroupLogDestination(logGroup('Access')),
         format: AccessLogFormat.custom(JSON.stringify({ requestId: '$context.requestId', routeKey: '$context.routeKey',

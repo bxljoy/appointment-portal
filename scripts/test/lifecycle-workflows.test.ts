@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 type Workflow = { on: { workflow_dispatch: unknown }; permissions: Record<string, string>;
   concurrency: Record<string, unknown>; jobs: Record<string, { environment: string; 'timeout-minutes': number;
-    steps: { id?: string; name?: string; if?: string; run?: string; uses?: string; with?: { path?: string } }[] }> };
+    steps: { id?: string; name?: string; if?: string; run?: string; uses?: string; with?: { path?: string; ref?: string; 'persist-credentials'?: boolean } }[] }> };
 const workflow = async (name: string) => parse(await readFile(new URL(`../../.github/workflows/${name}.yml`, import.meta.url), 'utf8')) as Workflow;
 
 describe('manual disposable environment workflows', () => {
@@ -54,11 +54,18 @@ describe('manual disposable environment workflows', () => {
   it('restores an explicit manifest and dry-runs before deleting', async () => {
     const value = await workflow('destroy');
     const text = JSON.stringify(value);
+    const branchGate = "github.ref != format('refs/heads/{0}', vars.DEMO_BRANCH)";
     expect(text.indexOf('pnpm demo:destroy -- --dry-run')).toBeLessThan(text.indexOf('pnpm demo:destroy -- --force-disposable-secrets'));
     expect(text).toContain('pnpm demo:verify-cleanup');
-    expect(text.indexOf('github.ref_name != vars.DEMO_BRANCH')).toBeLessThan(text.indexOf('configure-aws-credentials'));
+    expect(text).toContain(branchGate);
+    expect(text.indexOf(branchGate)).toBeLessThan(text.indexOf('configure-aws-credentials'));
     expect(text).toContain('pnpm demo:restore-manifest');
-    expect(text).toContain('${{ inputs.demo_head_sha }}');
+    expect(text).not.toContain('demo_head_sha');
+    expect(text).toContain('${{ github.sha }}');
+    expect(text).not.toContain('gh run download');
+    expect(Object.keys((value.on.workflow_dispatch as { inputs: object }).inputs)).toEqual(['demo_run_id']);
+    const checkout = value.jobs.destroy!.steps.find((step) => step.uses?.startsWith('actions/checkout@'))!;
+    expect(checkout.with).toMatchObject({ ref: '${{ github.sha }}', 'persist-credentials': false });
     expect(text.indexOf('pnpm demo:restore-manifest')).toBeLessThan(text.indexOf('configure-aws-credentials'));
   });
 

@@ -11,8 +11,6 @@ const processMock = vi.hoisted(() => vi.fn(async (...input: [string, readonly st
 vi.mock('../preflight.js', () => ({ runProcess: processMock }));
 import { verifyDeployment } from '../verify-deployment.js';
 
-const expiry = { createdAt: '2030-06-01T00:00:00.000Z', expiresAt: '2030-06-01T01:00:00.000Z' };
-
 let root: string;
 let configPath: string;
 let accountsPath: string;
@@ -22,6 +20,8 @@ let manualRegistrationPath: string;
 const correlation = { observe: async () => ({ requestCount: 1, coldCount: 1, warmCount: 0, maxDurationMs: 1 }) };
 
 beforeEach(async () => {
+  const preparedAt = new Date(Date.now() - 60 * 60_000);
+  const expiry = { createdAt: preparedAt.toISOString(), expiresAt: new Date(preparedAt.getTime() + 2 * 60 * 60_000).toISOString() };
   root = await mkdtemp(join(await realpath(tmpdir()), 'portal-verify-deployment-'));
   configPath = join(root, 'demo-config.json'); accountsPath = join(root, 'accounts.json');
   deploymentPath = join(root, 'deployment.json'); verificationPath = join(root, 'verification.json');
@@ -33,7 +33,7 @@ beforeEach(async () => {
     { alias: 'clinician-b', email: 'clinician-b@example.com', displayName: 'Clinician B', role: 'clinician' },
   ];
   await writeFile(accountsPath, JSON.stringify(accounts), { mode: 0o600 });
-  await writeFile(configPath, JSON.stringify({ account: manifest.account, region: manifest.region, postgresVersion: '17.6', durationHours: 1,
+  await writeFile(configPath, JSON.stringify({ account: manifest.account, region: manifest.region, postgresVersion: '17.6', durationHours: 2,
     maxCostUsd: 5, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), ...expiry,
     accountsFile: accountsPath, priceReport: accountsPath }), { mode: 0o600 });
   await writeFile(deploymentPath, JSON.stringify({ ...manifest, outputs: { ...manifest.outputs, UserPoolId: 'eu-north-1_fixture',

@@ -119,7 +119,7 @@ describe.each(['bootstrap', 'ready'] as const)('%s API trust boundary', (phase) 
     template.resourceCountIs('AWS::ApiGatewayV2::Stage', 1);
     const stage = Object.values(template.findResources('AWS::ApiGatewayV2::Stage'))[0]!.Properties;
     expect(stage).toMatchObject({ StageName: '$default', AutoDeploy: true,
-      DefaultRouteSettings: { ThrottlingRateLimit: 5, ThrottlingBurstLimit: 5 } });
+      DefaultRouteSettings: { ThrottlingRateLimit: 2, ThrottlingBurstLimit: 3 } });
     expect(JSON.parse(stage.AccessLogSettings.Format)).toEqual({ requestId: '$context.requestId',
       routeKey: '$context.routeKey', status: '$context.status', responseLength: '$context.responseLength',
       integrationLatency: '$context.integrationLatency', responseLatency: '$context.responseLatency' });
@@ -163,7 +163,10 @@ it('installs an AWS-side one-time application stack deletion safeguard', () => {
   expect(json).toContain('AppointmentPortal');
   expect(json).toContain('appointment-portal-expiry-portal123');
   const scheduleId = Object.keys(template.findResources('AWS::Scheduler::Schedule'))[0]!;
-  for (const type of ['AWS::RDS::DBInstance', 'AWS::RDS::DBProxy', 'AWS::CloudFront::Distribution']) {
+  for (const type of ['AWS::EC2::VPCEndpoint', 'AWS::RDS::DBInstance', 'AWS::RDS::DBProxy', 'AWS::CloudFront::Distribution']) {
     for (const resource of Object.values(template.findResources(type))) expect(resource.DependsOn ?? []).toContain(scheduleId);
   }
+  const endpoint = Object.values(template.findResources('AWS::EC2::VPCEndpoint'))[0]!;
+  expect(endpoint.Properties.ServiceName).toBe('com.amazonaws.eu-north-1.secretsmanager');
+  expect(endpoint.Properties.SubnetIds).toHaveLength(2);
 });

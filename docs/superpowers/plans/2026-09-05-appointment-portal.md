@@ -752,7 +752,7 @@ proxy and creates log/metric resources. Stack outputs are exact names:
   timeout, ARM64, reservedConcurrency=5 each, isolated subnets and API SG. Bundle AWS
   SDK clients explicitly; add CA assets and grant read of applicationSecret only.
 - [ ] Configure HTTP API JWT authorizer issuer/client ID, scope portal/access on each
-  route, stage throttling rate=10 and burst=20, and JSON access logs. Same-origin web
+  route, conservative stage throttling rate=2 and burst=3, and JSON access logs. Same-origin web
   traffic needs no permissive CORS. If localhost uses the deployed API, allow only
   the explicit localhost origin and Authorization/Content-Type, never wildcard origins.
 - [ ] Configure S3 block-public-access, enforceSSL, versioning off, destroy policy and

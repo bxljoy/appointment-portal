@@ -12,7 +12,7 @@ export const verifyDeployment = async (paths: { deployment?: string; config?: st
   dependencies: { correlation?: ReturnType<typeof cloudWatchCorrelationAdapter>; now?: () => Date } = {}): Promise<VerificationSummary> => {
   const manifest = await loadDeploymentManifest(paths.deployment);
   if (!manifest || manifest.phase !== 'ready') throw new Error('A ready deployment manifest is required.');
-  const config = await readAwsDemoInput(paths.config ?? resolve('.runtime/demo-config.json'));
+  const config = await readAwsDemoInput(paths.config ?? resolve('.runtime/demo-config.json'), { requireCurrentCreation: false });
   if (config.account !== manifest.account || config.region !== manifest.region || config.sourceCommit !== manifest.sourceCommit) {
     throw new Error('Private demo configuration does not match the ready deployment manifest.');
   }

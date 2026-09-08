@@ -22,6 +22,7 @@ export class DataConstruct extends Construct {
   readonly apiSecurityGroup: ec2.SecurityGroup;
   readonly migrationSecurityGroup: ec2.SecurityGroup;
   readonly migrationFunction: NodejsFunction;
+  readonly secretsManagerEndpoint: ec2.InterfaceVpcEndpoint;
 
   constructor(scope: Construct, id: string, props: { config: PortalConfig }) {
     super(scope, id);
@@ -85,7 +86,7 @@ export class DataConstruct extends Construct {
     // DatabaseProxy grants its security group the target database's port above.
     this.apiSecurityGroup.connections.allowTo(endpointSecurityGroup, ec2.Port.tcp(443));
     this.migrationSecurityGroup.connections.allowTo(endpointSecurityGroup, ec2.Port.tcp(443));
-    this.vpc.addInterfaceEndpoint('SecretsManagerEndpoint', {
+    this.secretsManagerEndpoint = this.vpc.addInterfaceEndpoint('SecretsManagerEndpoint', {
       service: ec2.InterfaceVpcEndpointAwsService.SECRETS_MANAGER,
       privateDnsEnabled: true, subnets: isolated, securityGroups: [endpointSecurityGroup],
       open: false, lookupSupportedAzs: false,

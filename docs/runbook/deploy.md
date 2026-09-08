@@ -91,11 +91,17 @@ enter process arguments or environment variables.
   "branch": "main",
   "sourceCommit": "0123456789abcdef0123456789abcdef01234567",
   "createdAt": "2030-06-01T12:00:00.000Z",
-  "expiresAt": "2030-06-01T18:00:00.000Z",
+  "expiresAt": "2030-06-01T14:00:00.000Z",
   "accountsFile": "/absolute/path/.runtime/accounts.json",
   "priceReport": "/absolute/path/.runtime/prices.json"
 }
 ```
+
+The workflow generates this file immediately before AWS credential configuration.
+Readers require `createdAt` to be within five minutes of their current clock and
+require `expiresAt` to be in the future and no later than the current time plus the
+configured duration, capped at six hours. This accepts normal action and preflight
+startup while preventing a restored timestamp from extending a deployment's lifetime.
 
 `prices.json` records `checkedAt`, `region`, `currency: "USD"`, at least two source
 URLs, duration assumptions, and these numeric rate fields: `databaseHourly`,
@@ -231,7 +237,8 @@ checked 2026-09-06 in [AWS CDK bootstrapping](https://docs.aws.amazon.com/cdk/v2
 and the [bootstrap CLI reference](https://docs.aws.amazon.com/cdk/v2/guide/ref-cli-cmd-bootstrap.html).
 
 The application stack creates a one-time EventBridge Scheduler safeguard before its
-primary billable resources through explicit CloudFormation dependencies. The schedule
+primary billable resources through explicit CloudFormation dependencies, including
+the two-subnet Secrets Manager interface endpoint, database, proxy, and distribution. The schedule
 uses an absolute UTC `ExpiresAt` computed from the configured
 duration, capped at six hours, and persisted in the private configuration, manifest,
 and stack outputs. The schedule targets CloudFormation `DeleteStack` for

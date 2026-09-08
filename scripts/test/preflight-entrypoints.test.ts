@@ -4,10 +4,11 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { expect, it, vi } from 'vitest';
 import { runPreflightCli } from '../preflight-cli.js';
-import { toPreflightInput, type PreflightInput, type PreflightProbe } from '../preflight.js';
+import { runProcess, toPreflightInput, type PreflightInput, type PreflightProbe } from '../preflight.js';
 import { setupDelivery } from '../setup-delivery.js';
 import { manifest } from './fakes.js';
 
+const preparedAt = new Date();
 const fullInput = {
   account: manifest.account,
   region: manifest.region,
@@ -17,13 +18,23 @@ const fullInput = {
   repository: 'OWNER/REPOSITORY',
   branch: 'main',
   sourceCommit: 'a'.repeat(40),
-  createdAt: '2030-06-01T00:00:00.000Z',
-  expiresAt: '2030-06-01T01:00:00.000Z',
+  createdAt: preparedAt.toISOString(),
+  expiresAt: new Date(preparedAt.getTime() + 60 * 60_000).toISOString(),
   accountsFile: '/private/credentials/accounts.json',
   priceReport: '/private/prices.json',
 };
 const preflightKeys = ['account', 'durationHours', 'maxCostUsd', 'postgresVersion', 'region'];
 const unusedProbe = {} as PreflightProbe;
+
+it('streams subprocess bytes to a private output file without UTF-8 conversion', async () => {
+  const root = await mkdtemp(join(await realpath(tmpdir()), 'portal-binary-process-'));
+  const output = join(root, 'artifact.zip');
+  try {
+    const result = await runProcess(process.execPath, ['-e', 'process.stdout.write(Buffer.from([0,255,80,75]))'], { stdoutFile: output });
+    expect(result.stdout).toBe('');
+    expect([...await readFile(output)]).toEqual([0, 255, 80, 75]);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
 
 it('projects the public preflight CLI input to the exact strict contract', async () => {
   const observed: PreflightInput[] = [];

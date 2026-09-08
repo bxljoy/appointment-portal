@@ -38,10 +38,11 @@ const configSchema = z.strictObject({
 }).superRefine((value, context) => {
   const delta = new Date(value.expiresAt).getTime() - new Date(value.createdAt).getTime();
   if (!Number.isFinite(delta) || delta <= 0 || delta > value.durationHours * 60 * 60_000 || delta > 6 * 60 * 60_000) {
-    context.addIssue({ code: 'custom', path: ['expiresAt'], message: 'Expiry must enforce the configured lifetime of no more than six hours.' });
+    context.addIssue({ code: 'custom', path: ['expiresAt'], message: 'Maximum lifetime must not exceed the configured duration or six hours.' });
   }
 });
 export type AwsDemoInput = z.infer<typeof configSchema>;
+const CONFIG_CLOCK_SKEW_MS = 5 * 60_000;
 
 const priceSchema = z.strictObject({
   checkedAt: z.iso.datetime({ offset: true }), region: z.string(), currency: z.literal('USD'),
@@ -71,9 +72,28 @@ const clientsFor = (region: string): AwsClients => ({
   sts: new STSClient({ region }), logs: new CloudWatchLogsClient({ region }), cognito: new CognitoIdentityProviderClient({ region }),
 });
 
-export const readAwsDemoInput = async (path: string): Promise<AwsDemoInput> => {
-  const input = configSchema.parse(JSON.parse(await readPrivateFile(path)));
-  if (new Date(input.expiresAt).getTime() <= Date.now()) throw new Error('Demo maximum lifetime has already expired; prepare a fresh configuration.');
+export const parseAwsDemoInput = (raw: unknown, now = new Date()): AwsDemoInput => {
+  const input = configSchema.parse(raw);
+  const current = now.getTime(); const created = new Date(input.createdAt).getTime(); const expires = new Date(input.expiresAt).getTime();
+  if (!Number.isFinite(current) || Math.abs(current - created) > CONFIG_CLOCK_SKEW_MS) {
+    throw new Error('Demo configuration createdAt must match the current execution time within five minutes.');
+  }
+  const maximumLifetime = Math.min(input.durationHours, 6) * 60 * 60_000;
+  if (expires <= current || expires > current + maximumLifetime) {
+    throw new Error('Demo maximum lifetime must end after the current time and within the configured duration or six hours.');
+  }
+  return input;
+};
+
+export const readAwsDemoInput = async (path: string, options: {
+  now?: Date; requireCurrentCreation?: boolean; requireUnexpired?: boolean;
+} = {}): Promise<AwsDemoInput> => {
+  const raw = JSON.parse(await readPrivateFile(path));
+  if (options.requireCurrentCreation ?? true) return parseAwsDemoInput(raw, options.now);
+  const input = configSchema.parse(raw);
+  if ((options.requireUnexpired ?? true) && new Date(input.expiresAt).getTime() <= (options.now ?? new Date()).getTime()) {
+    throw new Error('Demo maximum lifetime has already expired; prepare a fresh configuration.');
+  }
   return input;
 };
 

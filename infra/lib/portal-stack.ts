@@ -42,6 +42,7 @@ export class PortalStack extends Stack {
     this.operations = new OperationsConstruct(this, 'Operations', { functions: this.api.functions, httpApi: this.api.httpApi,
       database: this.data.database, proxy: this.data.proxy, proxyName: this.data.proxyName });
     if (safeguard) {
+      this.data.secretsManagerEndpoint.node.addDependency(safeguard);
       this.data.database.node.addDependency(safeguard);
       this.data.proxy.node.addDependency(safeguard);
       this.web.distribution.node.addDependency(safeguard);
