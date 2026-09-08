@@ -7,7 +7,7 @@
     "node": "24.0.1"
   },
   "scripts": {
-    "test": "vitest run",
+    "test": "node scripts/run-tests.mjs",
     "typecheck": "pnpm -r typecheck && tsc -p scripts/tsconfig.json --noEmit && tsc -p tests/tsconfig.json",
     "lint": "eslint .",
     "build": "pnpm -r build",

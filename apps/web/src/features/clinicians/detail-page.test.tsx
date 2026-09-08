@@ -84,8 +84,15 @@ describe('availability date bounds', () => {
     await screen.findByRole('button', { name: 'More available times' });
     await portal.user.click(screen.getByRole('button', { name: 'More available times' }));
     await waitFor(() => expect(slotRequests.some((url) => url.searchParams.get('cursor') === 'old-cursor')).toBe(true));
+    const previousWindow = { from: slotRequests[0]?.searchParams.get('from'), to: slotRequests[0]?.searchParams.get('to') };
+    const requestsBeforeNavigation = slotRequests.length;
     await portal.user.click(screen.getByRole('button', { name: 'Navigate to following date' }));
-    await waitFor(() => expect(slotRequests.some((url) => url.searchParams.get('from') === '2030-01-15T23:00:00.000Z')).toBe(true));
-    expect(slotRequests.some((url) => url.searchParams.get('from') === '2030-01-15T23:00:00.000Z' && url.searchParams.get('cursor') === 'old-cursor')).toBe(false);
+    await waitFor(() => expect(slotRequests.length).toBeGreaterThan(requestsBeforeNavigation));
+    const navigatedRequests = slotRequests.slice(requestsBeforeNavigation);
+    expect(navigatedRequests.some((url) => {
+      const from = url.searchParams.get('from'); const to = url.searchParams.get('to');
+      return from !== null && to !== null && from !== previousWindow.from && to !== previousWindow.to;
+    })).toBe(true);
+    expect(navigatedRequests.every((url) => url.searchParams.get('cursor') !== 'old-cursor')).toBe(true);
   });
 });

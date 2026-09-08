@@ -32,9 +32,10 @@ describe('manual disposable environment workflows', () => {
     expect(text).toContain('.runtime/diagnostics.json');
   });
 
-  it('installs the AWS verification browser before deployment', async () => {
+  it('installs the browser before tests and deployment', async () => {
     const text = JSON.stringify(await workflow('demo'));
     expect(text).toContain('playwright install --with-deps chromium');
+    expect(text.indexOf('playwright install --with-deps chromium')).toBeLessThan(text.indexOf('pnpm test'));
     expect(text.indexOf('playwright install --with-deps chromium')).toBeLessThan(text.indexOf('pnpm demo:deploy'));
   });
 

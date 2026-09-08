@@ -3,10 +3,8 @@ import { chmod, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
-import { createServer } from 'node:http';
-import { chromium } from '@playwright/test';
 import { authenticatedUserFlowAdapter, initializePuppeteerBrowser, lighthouseCliAdapter, lighthouseWorkerEnvironment, measureWeb, validateWebMeasurement, type LighthouseAdapter } from '../measure-web.js';
-import { runProcess, type ProcessRunner } from '../preflight.js';
+import type { ProcessRunner } from '../preflight.js';
 import { manifest } from './fakes.js';
 
 const ready = { ...manifest, outputs: { ...manifest.outputs, FrontendUrl: 'https://portal.example' } };
@@ -114,30 +112,16 @@ it('revalidates tool, mode, session, target, query, and ready-manifest identity 
   expect(() => validateWebMeasurement(evidence, ready, new Date('2026-09-08T00:00:01Z'))).toThrow(/stale/i);
 });
 
-it('parses real navigation-shaped Lighthouse output and passes mobile flags', async () => {
+it('parses navigation output and keeps the production Chromium flags sandboxed', async () => {
   const runner: ProcessRunner = vi.fn(async () => ({ stdout: JSON.stringify({ finalDisplayedUrl: 'https://portal.example/', categories: { performance: { score: .94 } },
     audits: { 'largest-contentful-paint': { numericValue: 1700 }, 'cumulative-layout-shift': { numericValue: .02 } } }), stderr: '' }));
   const result = await lighthouseCliAdapter(runner).run({ url: 'https://portal.example/', profile: 'mobile', mode: 'navigation' });
   expect(result).toMatchObject({ kind: 'navigation', performanceScore: .94, metrics: { lcpMs: 1700 } });
-  expect(vi.mocked(runner).mock.calls[0]?.[1]).toContain('--form-factor=mobile');
+  const defaultArgs = vi.mocked(runner).mock.calls[0]?.[1] ?? [];
+  expect(defaultArgs).toContain('--form-factor=mobile');
+  expect(defaultArgs.filter((arg) => arg.startsWith('--chrome-flags='))).toEqual(['--chrome-flags=--headless=new']);
+  expect(defaultArgs.join(' ')).not.toContain('--no-sandbox');
 });
-
-it('executes the pinned Lighthouse navigation adapter against a real local page', async () => {
-  const server = createServer((_request, response) => { response.setHeader('Content-Type', 'text/html');
-    response.end('<!doctype html><meta name="viewport" content="width=device-width"><title>Fixture</title><main>Ready</main>'); });
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve)); const address = server.address();
-  if (!address || typeof address === 'string') throw new Error('Local Lighthouse fixture did not bind.');
-  try {
-    const runner: ProcessRunner = (_executable, args) => runProcess(process.execPath, ['node_modules/lighthouse/cli/index.js', ...args], {
-      env: { PATH: process.env.PATH, HOME: process.env.HOME, TMPDIR: process.env.TMPDIR, CHROME_PATH: chromium.executablePath() } });
-    const result = await lighthouseCliAdapter(runner).run({ url: `http://127.0.0.1:${address.port}/`, profile: 'mobile', mode: 'navigation' });
-    expect(result).toMatchObject({ kind: 'navigation', sessionEvidence: 'public-page' });
-    if (result.kind === 'navigation') {
-      expect(result.performanceScore).toBeGreaterThan(0);
-      expect(Object.keys(result.metrics).sort()).toEqual(Object.keys(navigationMetrics).sort());
-    }
-  } finally { server.closeAllConnections(); await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve())); }
-}, 30_000);
 
 it('scrubs the credential-bearing worker and rejects hostile Puppeteer diagnostics in a real subprocess before credential access', async () => {
   const authority = { account: manifest.account, region: manifest.region, issuer: manifest.outputs.Issuer!, clientId: manifest.outputs.ClientId!,

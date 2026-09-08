@@ -523,8 +523,14 @@ describe('disposable deployment lifecycle', () => {
       if (command.constructor.name === 'PutObjectCommand') stored.set(command.input.Key!, command.input.ChecksumSHA256!);
       return s3Send(command as never);
     }) as never;
+    const loadFrontendFiles = vi.fn(async () => [
+      { key: 'index.html', body: new TextEncoder().encode('<!doctype html><main>Portal</main>'), contentType: 'text/html' },
+      { key: 'assets/app-abcd1234.js', body: new TextEncoder().encode('export {};'), contentType: 'text/javascript' },
+      { key: 'assets/app-abcd1234.css', body: new TextEncoder().encode('body{}'), contentType: 'text/css' },
+    ]);
     const runtime = makeAwsDemoDependencies({ account: manifest.account, region: manifest.region, postgresVersion: '17.6', durationHours: 1,
-      maxCostUsd: 1, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), ...expiry, accountsFile: '/unused', priceReport: '/unused' }, clients);
+      maxCostUsd: 1, repository: 'OWNER/REPOSITORY', branch: 'main', sourceCommit: 'a'.repeat(40), ...expiry, accountsFile: '/unused', priceReport: '/unused' }, clients,
+    undefined, { loadFrontendFiles });
     const deployed = { ...manifest, outputs: { FrontendUrl: frontend, UserPoolId: 'eu-north-1_fixture', ClientId: 'client',
       Issuer: 'https://cognito-idp.eu-north-1.amazonaws.com/eu-north-1_fixture', CognitoDomain: 'https://fixture.auth.eu-north-1.amazoncognito.com',
       WebBucketName: 'bucket', DistributionId: 'distribution' } };
@@ -536,6 +542,7 @@ describe('disposable deployment lifecycle', () => {
       (command as { input: { Key?: string } }).input.Key?.startsWith('assets/'));
     expect(immutablePuts).toHaveLength(firstImmutablePuts.length);
     expect(firstImmutablePuts.length).toBeGreaterThan(0);
+    expect(loadFrontendFiles).toHaveBeenCalledTimes(2);
   });
 
   it('persists a minimal recovery manifest before output parsing can fail after deployment', async () => {

@@ -135,7 +135,8 @@ const contextArgs = (input: AwsDemoInput, phase: 'bootstrap' | 'ready', frontend
 export const makeAwsDemoDependencies = (input: AwsDemoInput, clients = clientsFor(input.region), runner: ProcessRunner = runProcess,
   manifestStore: { load?: () => Promise<DeploymentManifest | undefined>; save?: (manifest: DeploymentManifest) => Promise<void>;
     saveVerification?: (summary: Awaited<ReturnType<typeof verifyAws>>) => Promise<void>;
-    correlation?: ReturnType<typeof cloudWatchCorrelationAdapter>; loadManualRegistration?: () => Promise<ManualRegistrationEvidence | undefined> } = {}): DemoDependencies => {
+    correlation?: ReturnType<typeof cloudWatchCorrelationAdapter>; loadManualRegistration?: () => Promise<ManualRegistrationEvidence | undefined>;
+    loadFrontendFiles?: () => Promise<PublishFile[]> } = {}): DemoDependencies => {
   const config: DemoConfig = { ...input, qualifier: QUALIFIER, toolkitStack: TOOLKIT_STACK, appStack: APP_STACK, deliveryStack: DELIVERY_STACK, projectTag: PROJECT_TAG };
   const credentials = new RuntimeCredentialStore(resolve('.runtime/credentials'));
   let activeManifest: DeploymentManifest | undefined;
@@ -211,7 +212,8 @@ export const makeAwsDemoDependencies = (input: AwsDemoInput, clients = clientsFo
       if (!credential?.sub) throw new Error('Application database probe fixture is unavailable.');
       await probeApplicationDatabase(requiredManifestOutput(manifest, 'ProfilesFunctionName'), credential.sub, clients.lambda);
     },
-    publish: async (manifest) => publishBuiltFrontend(manifest, clients),
+    publish: async (manifest) => publishBuiltFrontend(manifest, clients,
+      manifestStore.loadFrontendFiles ?? (() => readFrontendFiles(resolve('apps/web/dist')))),
     verify: async (manifest) => {
       const frontendUrl = requiredManifestOutput(manifest, 'FrontendUrl');
       const fileEnvironment = await awsPlaywrightFileEnvironment(input, manifest, credentials);
@@ -345,8 +347,9 @@ export const awsPlaywrightEnvironment = (frontendUrl: string, fileEnvironment: R
   };
 };
 
-const publishBuiltFrontend = async (manifest: DeploymentManifest, clients: AwsClients): Promise<void> => {
-  const files = await readFrontendFiles(resolve('apps/web/dist'));
+const publishBuiltFrontend = async (manifest: DeploymentManifest, clients: AwsClients,
+  loadFrontendFiles: () => Promise<PublishFile[]>): Promise<void> => {
+  const files = await loadFrontendFiles();
   const frontendUrl = requiredManifestOutput(manifest, 'FrontendUrl');
   const userPoolId = requiredManifestOutput(manifest, 'UserPoolId');
   const clientId = requiredManifestOutput(manifest, 'ClientId');
