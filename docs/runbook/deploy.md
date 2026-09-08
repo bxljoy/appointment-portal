@@ -98,10 +98,13 @@ enter process arguments or environment variables.
 ```
 
 The workflow generates this file immediately before AWS credential configuration.
-Readers require `createdAt` to be within five minutes of their current clock and
-require `expiresAt` to be in the future and no later than the current time plus the
-configured duration, capped at six hours. This accepts normal action and preflight
-startup while preventing a restored timestamp from extending a deployment's lifetime.
+Fresh preflight and deploy readers require `createdAt` to be within five minutes of
+their current clock and require `expiresAt` to be in the future and no later than the
+current time plus the configured duration, capped at six hours. Later verification
+requires the same configuration to remain unexpired; delivery setup performs structural
+validation because it creates the reusable control plane rather than the application.
+This accepts normal action and preflight startup while preventing a restored timestamp
+from extending a deployment's lifetime.
 
 `prices.json` records `checkedAt`, `region`, `currency: "USD"`, at least two source
 URLs, duration assumptions, and these numeric rate fields: `databaseHourly`,

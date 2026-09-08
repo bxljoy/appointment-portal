@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { expect, it, vi } from 'vitest';
 import { manifest } from './fakes.js';
 import { parseRequestIdMarkers, playwrightVerificationAdapter, verifyAws, type VerificationAdapter } from '../verify-aws.js';
@@ -113,4 +114,11 @@ it('runs managed browser behavior at desktop and mobile sizes while keeping API 
   expect(runner.mock.calls[1]?.[1]).toEqual([
     'exec', 'playwright', 'test', 'tests/e2e/aws-api.spec.ts', '--project=aws',
   ]);
+});
+
+it('keeps the stage-throttle proof on the matched JWT-protected profile route', async () => {
+  const source = await readFile(new URL('../../tests/e2e/aws-api.spec.ts', import.meta.url), 'utf8');
+  expect(source).toContain("Array.from({ length: 30 }, () => unauthenticated.get('/api/me'))");
+  expect(source).not.toContain('/api/throttle-probe');
+  expect(source).toContain('status === 401 || status === 429');
 });

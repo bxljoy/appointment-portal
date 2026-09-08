@@ -82,6 +82,30 @@ describe('destroy artifact provenance', () => {
       { name: 'deployment.json', contents: '{}' }, { name: 'deployment.json', contents: '{}' },
     ]))).toThrow(/duplicate/i);
   });
+
+  it('rejects encrypted, oversized, unsupported, corrupt, and inconsistent ZIP entries', () => {
+    const encrypted = zip([{ name: 'deployment.json', contents: '{}' }]);
+    encrypted.writeUInt16LE(0x801, 6);
+    encrypted.writeUInt16LE(0x801, centralDirectoryOffset(encrypted) + 8);
+    expect(() => extractDeploymentJson(encrypted)).toThrow(/encrypted/i);
+
+    const oversized = zip([{ name: 'deployment.json', contents: 'x'.repeat(4_000_001) }]);
+    expect(() => extractDeploymentJson(oversized)).toThrow(/large/i);
+
+    const unsupported = zip([{ name: 'deployment.json', contents: '{}' }]);
+    unsupported.writeUInt16LE(99, 8);
+    unsupported.writeUInt16LE(99, centralDirectoryOffset(unsupported) + 10);
+    expect(() => extractDeploymentJson(unsupported)).toThrow(/unsupported/i);
+
+    const corrupt = zip([{ name: 'deployment.json', contents: '{}' }]);
+    const corruptCentral = centralDirectoryOffset(corrupt);
+    corrupt.writeUInt32LE((corrupt.readUInt32LE(corruptCentral + 16) + 1) >>> 0, corruptCentral + 16);
+    expect(() => extractDeploymentJson(corrupt)).toThrow(/integrity/i);
+
+    const inconsistent = zip([{ name: 'deployment.json', contents: '{}' }]);
+    inconsistent.writeUInt16LE(8, 8);
+    expect(() => extractDeploymentJson(inconsistent)).toThrow(/inconsistent/i);
+  });
 });
 
 const crcTable = Array.from({ length: 256 }, (_, value) => {
@@ -93,6 +117,11 @@ const crc32 = (input: Buffer) => {
   let crc = 0xffffffff;
   for (const byte of input) crc = crcTable[(crc ^ byte) & 0xff]! ^ (crc >>> 8);
   return (crc ^ 0xffffffff) >>> 0;
+};
+const centralDirectoryOffset = (archive: Buffer) => {
+  const offset = archive.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
+  if (offset < 0) throw new Error('Test ZIP central directory is missing.');
+  return offset;
 };
 const zip = (entries: Array<{ name: string; contents: string; mode?: number }>) => {
   const locals: Buffer[] = []; const centrals: Buffer[] = []; let offset = 0;

@@ -18,13 +18,15 @@ code can query PostgreSQL as `portal_app` through RDS Proxy with the application
 secret. The delivery role can invoke only this fixed function, and the probe never
 accepts migration success as application-credential proof.
 
-HTTP API stage rate is two requests/second with a burst of three, leaving capacity
-below each application function's reserved concurrency of five. The deployed AWS
-browser suite retains a normal authenticated Lambda request and generates its explicit
-HTTP 429 assertion on an unknown gateway-only route. It also covers cross-clinician
-slot and appointment access, patient attempts to manage availability, clinician
-attempts to book, and forged role/body identities. It verifies concealed 403/404
-responses and unchanged owner state while retaining only allowlisted request IDs.
+HTTP API stage rate is two requests/second with a burst of three, reducing burst
+pressure before requests contend for each application function's reserved concurrency
+of five. The deployed AWS browser suite retains a normal authenticated Lambda request
+and generates its explicit HTTP 429 assertion with thirty unauthenticated requests to
+matched direct-API `GET /api/me`; only 401/429 responses are accepted, so the managed
+JWT authorizer must stop the request before Lambda integration. It also covers
+cross-clinician slot and appointment access, patient attempts to manage availability,
+clinician attempts to book, and forged role/body identities. It verifies concealed
+403/404 responses and unchanged owner state while retaining only allowlisted request IDs.
 
 Cleanup no longer turns restored `owned:true` manifest data into deletion authority.
 Direct deletion requires a current live `Project=appointment-portal` tag or fresh
@@ -78,9 +80,18 @@ the expiry.
 
 The stage throttle is two requests/second with a burst of three. Live verification
 makes one normal authenticated application request, then drives the stage throttle
-through an unmatched direct-API route that cannot select a Lambda integration; only
-gateway 404 and 429 statuses are accepted. Completion output describes automated
+with thirty unauthenticated direct-API `GET /api/me` requests. The matched route
+inherits stage throttling, and the managed JWT authorizer prevents Lambda integration;
+only 401 and 429 statuses are accepted. Completion output describes automated
 verification as passed and explicitly says the manual Cognito journey may be pending.
+
+The final focused correction keeps the throttle proof on matched `GET /api/me` but
+removes authentication from all thirty burst requests. This ensures the route inherits
+the default-stage throttle while the managed JWT authorizer prevents Lambda integration.
+Direct parser coverage now exercises encryption, the 4,000,000-byte manifest bound,
+unsupported compression, CRC corruption, and local/central metadata disagreement.
+Its assertion-level RED was 1 failed and 10 passed: the acceptance contract required
+the matched profile route while the live suite still used `/api/throttle-probe`.
 
 ## Behavioral TDD evidence
 
@@ -108,11 +119,15 @@ rerun after the final all-entry ZIP symlink rejection.
 
 ## Verification
 
-- Full serialized Vitest aggregate: 61/61 files and 664/664 tests passed in
+- Full serialized Vitest aggregate before the final acceptance-test-only correction:
+  61/61 files and 664/664 tests passed in
   187.26 seconds. The preceding run's sole failure was an old exact-object expectation
   that omitted the intentionally persisted `expiresAt`; its focused correction passed
   10/10 before the clean aggregate rerun.
 - Local Playwright desktop/mobile E2E: 16/16 passed.
+- Final focused verification and ZIP parser contracts: 26/26 passed. The broad
+  aggregate was not repeated because this correction changes only AWS acceptance,
+  documentation, and direct test coverage; no runtime implementation changed.
 - ESLint: passed.
 - TypeScript workspace and scripts checks: passed.
 - Workspace build: passed.
